@@ -231,7 +231,7 @@
     <h1 class="title">Can Vera Rubin Accelerate Attention by 30×?
       <span class="subtitle-line">An Accuracy Simulation Reveals the Truth</span>
     </h1>
-    <div class="authors">OSCAR-INT3 / Rubin Simulation Project</div>
+    <div class="authors">Zhongzhu Zhou&ensp;·&ensp;Donglin Zhuang&ensp;·&ensp;Chenfeng Xu</div>
     <div class="meta">August 7, 2026 &nbsp;·&nbsp; Analytical estimates — not Rubin hardware measurements</div>
     <hr class="head-rule">
   </div>
@@ -246,9 +246,8 @@
       <span class="fig-title">Pick a KV recipe: what it costs in accuracy, what it buys in speed</span>
     </div>
     <p class="fig-sub">
-      Qwen3-4B-Thinking-2507. Choose a bit-width + method: the left panel shows its measured accuracy
-      (WikiText-2 PPL @ 8K, BF16 sink 64 + recent 256), the right panel the attention-only decode ceiling it
-      unlocks on Rubin — analytical, not a hardware measurement.
+      Qwen3-4B-Thinking-2507. Left: measured WikiText-2 PPL @ 8K. Right: analytical attention-only decode
+      ceiling on Rubin — not a hardware measurement.
     </p>
 
     <div class="controls">
@@ -302,24 +301,17 @@
     <div class="tldr" id="tldr">
       <h2>TL;DR</h2>
       <ol>
-        <li><strong>What does Vera Rubin provide?</strong> Per-GPU HBM4 bandwidth rises to 22 TB/s. Its new LUT-B Tensor
-          Core can use a 3-bit index to select one of eight E4M3 values and decompress it inside the matrix
-          multiplication, without first restoring BF16 data.</li>
-        <li><strong>How can attention use it?</strong> Long-context decoding rereads historical K/V for every generated
-          token. We store <code>Kᵀ</code> and <code>V</code> as 3-bit LUT-B operands and use Q and post-softmax P as
-          MXFP8 A operands, allowing Rubin to consume compressed KV while computing both <code>Q × Kᵀ</code> and
-          <code>P × V</code>.</li>
-        <li><strong>Why not simply change KV to 3 bits?</strong> Naive uniform INT3 is destroyed by outliers and a small
-          number of sensitive tokens: Qwen3-4B's 8K PPL jumps from 9.468 in BF16 to 1504.444. Preserving accuracy
-          requires offline per-layer Lloyd-Max codebooks; OSCAR rotation/clipping and a BF16 sink/recent window can
-          further protect sensitive values, while Q/P must use Rubin's supported E4M3 + UE8M0 block32 precision.</li>
-        <li><strong>What does attention look like afterward, and how much faster could it be?</strong> The
-          hardware-aligned K3V3 + Q/P simulation reaches 8K PPL of 10.434–10.465, still close to BF16, while effective
-          KV storage falls to about 3.63 bits/value. Counting bytes alone gives 29–32× H100 BF16, but that ignores the
-          B-only LUT constraint: MXFP8 has an M tile of 128, while Qwen GQA decode can pack only four Q rows per KV
-          head. Including this constraint gives a single-token attention-only ceiling of about <strong>20.4×</strong>
-          H100; at 60–80% execution efficiency, the range is about <strong>12.3–16.4×</strong>. The 30× figure is a
-          byte-only upper bound, not a credible prediction for the current kernel.</li>
+        <li><strong>What does Rubin provide?</strong> 22 TB/s of HBM4, plus a LUT-B Tensor Core that decompresses
+          3-bit indices into eight E4M3 values inside the matrix multiply.</li>
+        <li><strong>How can attention use it?</strong> Store <code>Kᵀ</code> and <code>V</code> as 3-bit LUT-B
+          operands; Q and post-softmax P stay MXFP8 in A, so both attention multiplies consume compressed KV
+          directly.</li>
+        <li><strong>Why not naive INT3?</strong> Outliers destroy it: Qwen3-4B's 8K PPL jumps from 9.468 to 1504.
+          Offline Lloyd-Max codebooks — plus OSCAR rotation and a BF16 sink/recent window — bring it back to
+          ~10.4.</li>
+        <li><strong>How much faster?</strong> Bytes alone say 29–32× H100 BF16, but the LUT is B-only and MXFP8's
+          M tile is 128 against 4 GQA rows: the credible single-token ceiling is about <strong>20.4×</strong>
+          (<strong>12.3–16.4×</strong> at 60–80% efficiency). 30× is a byte-only bound.</li>
       </ol>
     </div>
 
@@ -824,7 +816,7 @@ effective         = 3.125 bit/value</code></pre>
 
 <footer>
   <div class="wrap">
-    OSCAR-INT3 / Rubin simulation project · All throughput numbers are analytical attention-only roofline ceilings,
+    All throughput numbers are analytical attention-only roofline ceilings,
     not Rubin hardware measurements. Accuracy numbers are H100 numerical simulations of the Rubin precision contract
     (physical cache remains BF16). CUDA 13.4 Developer Preview terms prohibit characterizing hardware with preview
     performance data.
