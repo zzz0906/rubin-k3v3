@@ -572,7 +572,7 @@ effective         = 3.125 bit/value</code></pre>
       <caption>A. OSCAR + offline LM K3V3</caption>
       <thead><tr><th class="num">BF16 Sink</th><th class="num">BF16 Recent</th><th class="num">PPL ↓</th><th class="num">KL₅₀ ↓</th></tr></thead>
       <tbody>
-        <tr><td class="num">64</td><td class="num">256</td><td class="num">10.453</td><td class="num">0.09482</td></tr>
+        <tr><td class="num">64</td><td class="num">256</td><td class="num">10.406</td><td class="num">0.09482</td></tr>
         <tr><td class="num">0</td><td class="num">256</td><td class="num">15.019</td><td class="num">0.36044</td></tr>
         <tr><td class="num">64</td><td class="num">0</td><td class="num">10.659</td><td class="num">0.14341</td></tr>
         <tr><td class="num">0</td><td class="num">0</td><td class="num">16.260</td><td class="num">0.44066</td></tr>
@@ -600,19 +600,19 @@ effective         = 3.125 bit/value</code></pre>
       <tbody>
         <tr><td>BF16</td><td class="num">all</td><td class="num">all</td><td class="num"><strong>9.468</strong></td><td class="num"><strong>0.0000</strong></td></tr>
         <tr><td>OSCAR INT2, no LM</td><td class="num">64</td><td class="num">256</td><td class="num">9.893</td><td class="num">0.10791</td></tr>
-        <tr><td>Offline LM K3V3, no OSCAR</td><td class="num">64</td><td class="num">256</td><td class="num"><strong>10.406</strong></td><td class="num">0.09618</td></tr>
+        <tr><td>OSCAR + offline LM K3V3</td><td class="num">64</td><td class="num">256</td><td class="num"><strong>10.406</strong></td><td class="num"><strong>0.09482</strong></td></tr>
         <tr><td>OSCAR + offline LM K3V3 + FP8/UE8M0 Q/P</td><td class="num">64</td><td class="num">256</td><td class="num">10.434</td><td class="num">0.10090</td></tr>
         <tr><td>OSCAR + offline LM K3V3 + FP8/UE8M0 P only</td><td class="num">64</td><td class="num">256</td><td class="num">10.446</td><td class="num">0.09609</td></tr>
-        <tr><td>OSCAR + offline LM K3V3</td><td class="num">64</td><td class="num">256</td><td class="num">10.453</td><td class="num"><strong>0.09482</strong></td></tr>
+        <tr><td>Offline LM K3V3, no OSCAR</td><td class="num">64</td><td class="num">256</td><td class="num">10.453</td><td class="num">0.09618</td></tr>
         <tr><td>Offline LM K3V3, no OSCAR + FP8/UE8M0 Q/P</td><td class="num">64</td><td class="num">256</td><td class="num">10.465</td><td class="num">0.10447</td></tr>
         <tr><td>OSCAR + offline LM K3V3 + FP8/UE8M0 Q only</td><td class="num">64</td><td class="num">256</td><td class="num">10.466</td><td class="num">0.09935</td></tr>
         <tr><td>Ordinary uniform K3V3</td><td class="num">64</td><td class="num">256</td><td class="num">1504.444</td><td class="num">5.14717</td></tr>
       </tbody>
     </table></div>
     <p>
-      At 8K, no-OSCAR offline LM has the lowest PPL (10.406), while OSCAR + offline LM has the lowest KL₅₀ (0.09482);
-      they optimize different objectives. Adding Q/P QDQ shifts PPL and KL only slightly. OSCAR INT2 has lower PPL,
-      but higher KL₅₀ than either K3V3 configuration without Q/P QDQ.
+      At 8K, OSCAR + offline LM is the best 3-bit recipe on both axes: the lowest PPL (10.406) and the lowest KL₅₀
+      (0.09482). Adding Q/P QDQ slightly increases both PPL and KL. OSCAR INT2 has lower PPL, but higher KL₅₀ than
+      either K3V3 configuration without Q/P QDQ.
     </p>
 
     <h3>4.4 Cross-model measurement</h3>
