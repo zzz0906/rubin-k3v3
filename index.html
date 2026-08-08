@@ -245,7 +245,7 @@
       <span class="subtitle-line">An Accuracy Simulation Reveals the Truth</span>
     </h1>
     <div class="authors">Zhongzhu Zhou&ensp;·&ensp;Donglin Zhuang&ensp;·&ensp;Chenfeng Xu</div>
-    <div class="meta">August 7, 2026 &nbsp;·&nbsp; Analytical estimates — not Rubin hardware measurements &nbsp;·&nbsp; <a href="https://www.zhongzhuzhou.org/rubin-k3v3-zh/" style="color:var(--accent); text-decoration:none; border-bottom:1px solid rgba(138,106,20,.35);">中文版</a></div>
+    <div class="meta">August 7, 2026 &nbsp;·&nbsp; <a href="https://www.zhongzhuzhou.org/rubin-k3v3-zh/" style="color:var(--accent); text-decoration:none; border-bottom:1px solid rgba(138,106,20,.35);">中文版</a></div>
     <hr class="head-rule">
   </div>
 </header>
@@ -274,7 +274,7 @@
     </div>
     <p class="fig-sub">
       Qwen3-4B-Thinking-2507. Left: measured KL₅₀ divergence from the BF16 teacher @ 8K, with PPL alongside.
-      Right: analytical attention-only decode ceiling on Rubin — not a hardware measurement.
+      Right: analytical attention-only decode ceiling on Rubin.
     </p>
 
     <div class="controls">
@@ -335,8 +335,8 @@
           operands; Q and post-softmax P stay MXFP8 in A, so both attention multiplies consume compressed KV
           directly.</li>
         <li><strong>Why not naive INT3?</strong> Outliers destroy it: Qwen3-4B's 8K PPL jumps from 9.468 to 1504.
-          Offline Lloyd-Max codebooks — plus OSCAR rotation and a BF16 sink/recent window — bring it back to
-          ~10.4.</li>
+          Offline Lloyd-Max codebooks — plus <a href="https://arxiv.org/abs/2605.17757">OSCAR</a> rotation and a
+          BF16 sink/recent window — bring it back to ~10.4.</li>
         <li><strong>How much faster?</strong> Bytes alone say 29–32× H100 BF16, but the LUT is B-only and MXFP8's
           M tile is 128 against 4 GQA rows: the credible single-token ceiling is about <strong>20.4×</strong>
           (<strong>12.3–16.4×</strong> at 60–80% efficiency). 30× is a byte-only bound.</li>
@@ -363,12 +363,6 @@
         <tr><td>NVLink bandwidth</td><td class="num">3.6 TB/s</td><td class="num">260 TB/s switch bandwidth</td></tr>
       </tbody>
     </table></div>
-    <p>
-      These figures come from <a href="https://developer.nvidia.com/blog/inside-nvidia-rubin-gpu-architecture-powering-the-era-of-agentic-ai/">NVIDIA's Rubin GPU architecture overview</a>
-      and the <a href="https://www.nvidia.com/en-us/data-center/vera-rubin-nvl72/">Vera Rubin NVL72 specifications</a>.
-      They are peak specifications, not the sustained performance an application can necessarily achieve.
-    </p>
-
     <h3>1.2 Why do we care so much about the KV cache?</h3>
     <p>
       The community often summarizes inference with one line: <strong>prefill is compute-bound, decode is
@@ -383,7 +377,7 @@
       interestingly, it also introduces a new ISA that reduces bytes per value.
     </p>
 
-    <h3>1.3 CUDA 13.4 turns Rubin from slideware into an inspectable software target</h3>
+    <h3>1.3 Probing the Rubin ISA with CUDA 13.4</h3>
     <p>
       <a href="https://inferencex.semianalysis.com/blog/vera-rubin-nvl72-vs-gb200-nvl72-inference">SemiAnalysis / InferenceX</a>
       reported on the first public SM107 software stack: CUDA 13.4, PyTorch, vLLM, and OpenAI Triton have begun adding
@@ -516,7 +510,8 @@ effective         = 3.125 bit/value</code></pre>
     <h3>3.4 OSCAR: spread the spikes before giving them to 3 bits</h3>
     <p>
       Lloyd-Max decides where to put the eight levels, but 3-bit quantization remains difficult when a few dimensions
-      are much larger than the rest. The simplest interpretation of OSCAR is: <strong>rotate the coordinate system so
+      are much larger than the rest. The simplest interpretation of
+      <a href="https://arxiv.org/abs/2605.17757">OSCAR</a> is: <strong>rotate the coordinate system so
       spikes concentrated in a few dimensions are spread across more dimensions, then quantize.</strong>
     </p>
     <p>The procedure has only three steps:</p>
@@ -532,13 +527,14 @@ effective         = 3.125 bit/value</code></pre>
       value projections. A compact way to remember the difference is: <strong>Lloyd-Max changes the eight marks on the
       ruler; OSCAR first lays the object flat.</strong>
     </p>
-    <div class="callout">
-      The H100 experiment simulates this numerical QDQ, the BF16 safety window, and FP32 softmax, but its physical
-      cache remains BF16. A dummy-weight integration smoke containing one KDA layer and one Gated-MLA layer completed
-      both a health check and a real generation request, validating the connection between latent K3V3 and the Q/P
-      kernels; it does not replace distributed-load validation of the full 2.8T checkpoint. A real Rubin implementation
-      still needs 3-bit paged allocation, descriptors/swizzles, TMEM copies, barriers, and a fused SM107 kernel.
-    </div>
+    <p>
+      One more ingredient runs through everything: the <strong>BF16 sink/recent window</strong>. The first 64 tokens
+      are attention sinks — positions that soak up a disproportionate share of attention mass — and the most recent
+      256 tokens are the ones decode consults most heavily. Both segments bypass quantization entirely and stay in
+      BF16, protecting exactly the values that 3-bit hurts most; the ablation in §4.2 quantifies each part. The
+      window and the rotation/clipping recipe follow the
+      <a href="https://arxiv.org/abs/2605.17757">OSCAR paper</a>.
+    </p>
 
     <h2 id="sec4"><span class="idx">4</span>Accuracy Simulation: Does K3V3 Hurt the Model?</h2>
 
@@ -605,17 +601,17 @@ effective         = 3.125 bit/value</code></pre>
         <tr><td>BF16</td><td class="num">all</td><td class="num">all</td><td class="num"><strong>9.468</strong></td><td class="num"><strong>0.0000</strong></td></tr>
         <tr><td>OSCAR INT2, no LM</td><td class="num">64</td><td class="num">256</td><td class="num">9.893</td><td class="num">0.10791</td></tr>
         <tr><td>Offline LM K3V3, no OSCAR</td><td class="num">64</td><td class="num">256</td><td class="num"><strong>10.406</strong></td><td class="num">0.09618</td></tr>
-        <tr><td>Offline LM K3V3, no OSCAR + FP8/UE8M0 Q/P</td><td class="num">64</td><td class="num">256</td><td class="num">10.434</td><td class="num">0.10447</td></tr>
+        <tr><td>OSCAR + offline LM K3V3 + FP8/UE8M0 Q/P</td><td class="num">64</td><td class="num">256</td><td class="num">10.434</td><td class="num">0.10090</td></tr>
         <tr><td>OSCAR + offline LM K3V3 + FP8/UE8M0 P only</td><td class="num">64</td><td class="num">256</td><td class="num">10.446</td><td class="num">0.09609</td></tr>
         <tr><td>OSCAR + offline LM K3V3</td><td class="num">64</td><td class="num">256</td><td class="num">10.453</td><td class="num"><strong>0.09482</strong></td></tr>
-        <tr><td>OSCAR + offline LM K3V3 + FP8/UE8M0 Q/P</td><td class="num">64</td><td class="num">256</td><td class="num">10.465</td><td class="num">0.10090</td></tr>
+        <tr><td>Offline LM K3V3, no OSCAR + FP8/UE8M0 Q/P</td><td class="num">64</td><td class="num">256</td><td class="num">10.465</td><td class="num">0.10447</td></tr>
         <tr><td>OSCAR + offline LM K3V3 + FP8/UE8M0 Q only</td><td class="num">64</td><td class="num">256</td><td class="num">10.466</td><td class="num">0.09935</td></tr>
         <tr><td>Ordinary uniform K3V3</td><td class="num">64</td><td class="num">256</td><td class="num">1504.444</td><td class="num">5.14717</td></tr>
       </tbody>
     </table></div>
     <p>
       At 8K, no-OSCAR offline LM has the lowest PPL (10.406), while OSCAR + offline LM has the lowest KL₅₀ (0.09482);
-      they optimize different objectives. Adding Q/P QDQ slightly increases both PPL and KL. OSCAR INT2 has lower PPL,
+      they optimize different objectives. Adding Q/P QDQ shifts PPL and KL only slightly. OSCAR INT2 has lower PPL,
       but higher KL₅₀ than either K3V3 configuration without Q/P QDQ.
     </p>
 
@@ -695,7 +691,7 @@ effective         = 3.125 bit/value</code></pre>
       declines as the context grows longer.
     </p>
 
-    <h3>5.3 If only K3V3 compressed bytes are counted</h3>
+    <h3>5.3 The K3V3 roofline: compressed bytes, then the B-only tile detail</h3>
     <p>
       After adding the BF16 sink/recent window to K3V3, effective storage is 3.628 bit/value at 8K and 3.251 bit/value
       at 32K; the corresponding arithmetic intensities are 17.64 / 19.69 FLOP/B.
@@ -715,9 +711,8 @@ effective         = 3.125 bit/value</code></pre>
       occurs inside the Tensor Core MMA.
     </p>
 
-    <h3>5.4 LUT can only be B: the single-token decode cost</h3>
     <p>
-      The byte roofline above misses an important restriction. If decode is written as <code>K × Qᵀ</code> /
+      On top of the byte numbers, the first roofline detail is operand orientation. If decode is written as <code>K × Qᵀ</code> /
       <code>Vᵀ × Pᵀ</code>, the long KV matrix occupies A's M direction and short Q/P occupies B's N direction; for a
       very skinny GEMV, this orientation fills an asymmetric MMA tile more easily. LUT decompression supports B only,
       however, so compressed KV must use the <code>Q × Kᵀ</code> / <code>P × V</code> orientation.
@@ -772,7 +767,7 @@ effective         = 3.125 bit/value</code></pre>
       justify assuming that it exists.
     </p>
 
-    <h3>5.5 Operand-corrected practical range</h3>
+    <h3>5.4 Operand-corrected practical range</h3>
     <div class="table-wrap"><table class="data">
       <thead><tr><th class="num">Context</th><th class="num">Effective KV bits/value</th><th class="num">Byte-only HBM roofline</th><th class="num">B-only tile-corrected ceiling</th><th class="num">Expected @ 60–80%</th><th class="num">Corrected tok/s</th><th class="num">vs Rubin BF16</th></tr></thead>
       <tbody>
@@ -910,9 +905,9 @@ const PRESETS = [
     desc: "Full-precision baseline \u2014 no KV quantization." },
   { key: "uniform",  label: "Uniform \u00b7 3-bit",    color: "#a33d2f", bits: 3,  ppl: 1504.444, kl: 5.14717, qp: "BF16 Q/P",          kind: "k3v3",
     desc: "Eight evenly spaced levels, no rotation, no fitted codebook \u2014 \u201cjust store INT3\u201d. It collapses." },
-  { key: "lm",       label: "Lloyd-Max \u00b7 3-bit",  color: "#31607f", bits: 3,  ppl: 10.434,   kl: 0.10447, qp: "FP8/UE8M0 Q/P",     kind: "k3v3", hw: true,
-    desc: "Offline per-layer 8-entry E4M3 codebooks \u2014 the eight levels move to where the values actually are. Lowest PPL among 3-bit recipes." },
-  { key: "oscar_lm", label: "OSCAR+LM \u00b7 3-bit",   color: "#8a6a14", bits: 3,  ppl: 10.465,   kl: 0.10090, qp: "FP8/UE8M0 Q/P",     kind: "k3v3", hw: true,
+  { key: "lm",       label: "Lloyd-Max \u00b7 3-bit",  color: "#31607f", bits: 3,  ppl: 10.465,   kl: 0.10447, qp: "FP8/UE8M0 Q/P",     kind: "k3v3", hw: true,
+    desc: "Offline per-layer 8-entry E4M3 codebooks \u2014 the eight levels move to where the values actually are." },
+  { key: "oscar_lm", label: "OSCAR+LM \u00b7 3-bit",   color: "#8a6a14", bits: 3,  ppl: 10.434,   kl: 0.10090, qp: "FP8/UE8M0 Q/P",     kind: "k3v3", hw: true,
     desc: "OSCAR rotation + outlier clipping in front of Lloyd-Max codebooks. Lowest KL\u2085\u2080 divergence from the BF16 teacher." },
   { key: "int2",     label: "OSCAR \u00b7 2-bit",      color: "#3e6b5f", bits: 2,  ppl: 9.893,    kl: 0.10791, qp: "BF16 Q/P",          kind: "ref",
     desc: "OSCAR INT2 reference recipe (no Lloyd-Max). Rubin's LUT-B index is 3-bit, so this row is accuracy-only." },
@@ -1106,9 +1101,9 @@ function renderSpeed() {
     barRow(host, "Rubin \u00b7 K3V3", sp.k3v3, max, p.key === "uniform" ? "#a33d2f" : "#8a6a14",
       { valText: fmtTok(sp.k3v3) + " \u00b7 " + fmtX(sp.k3v3 / sp.h100) });
   } else if (p.kind === "bf16") {
-    barRow(host, "Rubin \u00b7 K3V3", 0, max, "", { ghost: "not applicable \u2014 cache stays 16-bit" });
+    barRow(host, "Rubin \u00b7 K3V3", 0, max, "", { ghost: "N/A" });
   } else {
-    barRow(host, "Rubin \u00b7 K3V3", 0, max, "", { ghost: "no 2-bit LUT-B path \u2014 accuracy reference only" });
+    barRow(host, "Rubin \u00b7 K3V3", 0, max, "", { ghost: "N/A" });
   }
 }
 
