@@ -3,8 +3,8 @@
   <desc id="desc">Top band: the shared K3V3 recipe. Offline Lloyd-Max codebooks with optional OSCAR rotation pack KV into 3-bit LUT-B granules once; decode runs two UTCQMMA.LUTB matrix multiplies with MXFP8 Q and P as A operands, FP32 softmax between them, and a BF16 sink/recent bypass. Bottom panels: GQA compresses separate K-transpose and V caches with two codebooks; MLA compresses one shared 512-d latent with one codebook that feeds both multiplies.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#f8fbff"/>
-      <stop offset="1" stop-color="#f5f3ff"/>
+      <stop offset="0" stop-color="#fbf9f1"/>
+      <stop offset="1" stop-color="#f4f1e4"/>
     </linearGradient>
     <linearGradient id="rubin" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#5b21b6"/>
