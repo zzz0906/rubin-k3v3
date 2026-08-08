@@ -484,39 +484,16 @@ effective         = 3.125 bit/value</code></pre>
     </p>
     <figure class="art" id="fig-window">
       <div class="frame">
-        <svg viewBox="0 0 1200 240" role="img" aria-label="Token-axis cache layout: BF16 sink and recent windows around a 3-bit LUT-B quantized body" style="width:100%;height:auto;display:block;">
-          <defs>
-            <marker id="warrV" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto" markerUnits="strokeWidth">
-              <path d="M0,0 L9,4.5 L0,9 Z" fill="#7c3aed"/>
-            </marker>
-            <marker id="warrG" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto" markerUnits="strokeWidth">
-              <path d="M0,0 L9,4.5 L0,9 Z" fill="#8a8371"/>
-            </marker>
-          </defs>
-          <text x="40" y="38" font-size="12.5" fill="#6e6a5c" font-family="Inter, sans-serif">attention sinks: absorb an outsized share of attention mass</text>
-          <line x1="100" y1="46" x2="100" y2="86" stroke="#b6ae95" stroke-width="1.2" stroke-dasharray="3 3"/>
-          <text x="920" y="40" font-size="12.5" font-weight="600" fill="#6d28d9" text-anchor="middle" font-family="Inter, sans-serif">packed once into 3-bit granules on exit</text>
-          <path d="M985 76 C 950 52, 890 52, 856 74" fill="none" stroke="#7c3aed" stroke-width="2.2" marker-end="url(#warrV)"/>
-          <rect x="40" y="90" width="122" height="56" rx="8" fill="#f3edd9" stroke="#a97f19" stroke-width="1.6"/>
-          <text x="101" y="114" text-anchor="middle" font-size="14.5" font-weight="700" fill="#6b520f" font-family="Inter, sans-serif">sink (BF16)</text>
-          <text x="101" y="133" text-anchor="middle" font-size="11.5" fill="#8a6a14" font-family="Inter, sans-serif">first 64 tokens</text>
-          <rect x="166" y="90" width="778" height="56" rx="8" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.6"/>
-          <text x="555" y="114" text-anchor="middle" font-size="15.5" font-weight="700" fill="#4c1d95" font-family="Inter, sans-serif">3-bit LUT-B body (K3V3)</text>
-          <text x="555" y="133" text-anchor="middle" font-size="12" fill="#5b21b6" font-family="Inter, sans-serif">3.125 bit/value · written once, read at every decode step</text>
-          <rect x="948" y="90" width="212" height="56" rx="8" fill="#f3edd9" stroke="#a97f19" stroke-width="1.6"/>
-          <text x="1054" y="114" text-anchor="middle" font-size="14.5" font-weight="700" fill="#6b520f" font-family="Inter, sans-serif">recent (BF16)</text>
-          <text x="1054" y="133" text-anchor="middle" font-size="11.5" fill="#8a6a14" font-family="Inter, sans-serif">last 256 tokens</text>
-          <line x1="1054" y1="150" x2="1054" y2="168" stroke="#b6ae95" stroke-width="1.2" stroke-dasharray="3 3"/>
-          <text x="1160" y="184" text-anchor="end" font-size="12.5" fill="#6e6a5c" font-family="Inter, sans-serif">hottest region: consulted at every decode step</text>
-          <line x1="40" y1="212" x2="1150" y2="212" stroke="#8a8371" stroke-width="1.6" marker-end="url(#warrG)"/>
-          <text x="40" y="232" font-size="12" fill="#97927f" font-family="Inter, sans-serif">token 0</text>
-          <text x="1160" y="232" text-anchor="end" font-size="12" fill="#97927f" font-family="Inter, sans-serif">newest token</text>
-        </svg>
+        <img src="assets/lutb-k3v3-unified.svg" alt="Integrated K3V3 diagram. Top band: the cache along the token axis — a gold BF16 sink and recent window around a violet 3-bit LUT-B body, packed once on exit and read as operand B by two UTCQMMA.LUTB multiplies with FP32 softmax between them; dashed rings mark where in-core lookup runs. Bottom panels: GQA compresses separate K-transpose and V caches with two codebooks; MLA compresses one shared 512-d latent feeding both multiplies.">
       </div>
-      <figcaption><b>Figure 2.</b> Cache layout along the token axis (segment widths not to scale). A small BF16
-      sink and a BF16 recent window protect the most sensitive positions; everything in between is sealed once into
-      3-bit LUT-B granules on exit from the window. At 8K context the window costs only ~0.5 bit/value on average
-      (3.125 → 3.63 b/val).</figcaption>
+      <figcaption><b>Figure 2.</b> The full K3V3 picture. <b>Top:</b> the cache along the token axis — a BF16 sink
+      and a BF16 recent window (gold) protect the most sensitive positions, and tokens leaving the window are packed
+      once into 3-bit LUT-B granules; decode reads the compressed body as operand B through two
+      <code>UTCQMMA.LUTB</code> multiplies with FP32 softmax between them, and the dashed rings mark the only places
+      3-bit data is decompressed. <b>Bottom:</b> the only architectural difference is which cache becomes operand B —
+      GQA/MHA compresses separate <code>Kᵀ</code> and <code>V</code> (two codebooks per layer), MLA compresses one
+      shared 512-d latent (one codebook feeding both MMAs). Segment widths not to scale; at 8K the window costs only
+      ~0.5 bit/value on average (3.125 → 3.63 b/val).</figcaption>
     </figure>
 
     <h3>3.2 What exactly happens inside attention?</h3>
