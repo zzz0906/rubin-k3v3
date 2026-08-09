@@ -810,18 +810,17 @@ effective         = 3.125 bit/value</code></pre>
 
     <h2 id="sec5"><span class="idx">6</span>What Does This Story Tell Us So Far?</h2>
     <ol>
+      <li><strong>Ordinary 3-bit KV cannot carry serving.</strong> Naive uniform INT3 simply collapses — 8K PPL goes
+        from 9.468 to 1504 and KL₅₀ to 5.15 — and no sink/recent window rescues it.</li>
+      <li><strong>OSCAR + Lloyd-Max brings the quality back.</strong> Offline per-layer codebooks with
+        rotation/clipping return Qwen3-4B to PPL ≈ 10.4 with the lowest KL₅₀, and lift Kimi K3's GPQA from 83.16% to
+        89.73% — all under the ISA-dictated Q/P contract (E4M3 + UE8M0 block32).</li>
       <li><strong>Dense KV-on-LUT-B has no legality blocker, but it has a decode-shape blocker.</strong> PTX does not
         require B to be a static weight; <code>Kᵀ</code> and <code>V</code> can be dynamic compressed B, but B-only
         plus MXFP8 M=128 limits single-token tile occupancy.</li>
-      <li><strong>A compile proof does not mean the kernel is finished.</strong> We generated <code>UTCQMMA.LUTB</code>
-        SASS, but do not yet have a production PagedAttention implementation.</li>
-      <li><strong>The precision contract must be dictated by the ISA.</strong> For LUT-B's MXFP8 A operand, the
-        hardware contract is E4M3 + UE8M0 block32.</li>
-      <li><strong>Offline LM is a more realistic serving recipe.</strong> It removes runtime centroid fitting and
-        leaves only index assignment.</li>
-      <li><strong>Performance is not determined by bytes alone.</strong> Packed layout, HBM efficiency, and collector
-        reuse still matter, but GQA packing, multi-token decode, and a small-M path determine whether the Tensor Core
-        can consume the bandwidth savings.</li>
+      <li><strong>Performance is not determined by bytes alone.</strong> Counting bytes gives 29–32× H100 BF16, while
+        the tile-corrected single-token ceiling is about 20.4× (12.3–16.4× at 60–80% efficiency); GQA packing,
+        multi-token decode, and a small-M path decide whether the Tensor Core can consume the bandwidth savings.</li>
     </ol>
 
     <h2 id="repro">Reproducibility</h2>
