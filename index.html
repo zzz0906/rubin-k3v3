@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Can Vera Rubin Accelerate Attention by 30×? An Accuracy Simulation Reveals the Truth</title>
+<title>Can Vera Rubin Support 3-bit KV Attention? An Accuracy Simulation Reveals the Truth</title>
 <meta name="description" content="Mapping 3-bit LUT-B KV caches onto attention for NVIDIA Vera Rubin: accuracy simulation with Lloyd-Max codebooks and OSCAR rotation, CUDA 13.4 compile probes, and operand-corrected roofline estimates.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -241,7 +241,7 @@
 
 <header class="paper">
   <div class="wrap">
-    <h1 class="title">Can Vera Rubin Accelerate Attention by 30×?
+    <h1 class="title">Can Vera Rubin Support 3-bit KV Attention?
       <span class="subtitle-line">An Accuracy Simulation Reveals the Truth</span>
     </h1>
     <div class="authors">Zhongzhu Zhou&ensp;·&ensp;Donglin Zhuang&ensp;·&ensp;Chenfeng Xu</div>
@@ -798,7 +798,7 @@ effective         = 3.125 bit/value</code></pre>
     <p>
       After operand-shape correction, the single-token attention-only ceiling is about <strong>20.4×</strong> H100 BF16
       and <strong>8.5×</strong> B200 BF16. Applying 60–80% execution efficiency gives about <strong>12.3–16.4×</strong>
-      and <strong>5.1–6.8×</strong>, respectively. The 30× title is reachable only as a byte-only roofline, or if GQA
+      and <strong>5.1–6.8×</strong>, respectively. The 30× number is reachable only as a byte-only roofline, or if GQA
       packing, multi-token decode, or a small-M path fills the Tensor Core again.
     </p>
     <div class="callout">
