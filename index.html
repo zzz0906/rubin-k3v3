@@ -274,7 +274,7 @@
     </div>
     <p class="fig-sub">
       Pick a model and a KV recipe. Left: measured KL₅₀ divergence from the BF16/native teacher @ 8K, with PPL
-      alongside. Right: analytical attention-only decode ceiling on Rubin (modeled for Qwen3-4B).
+      alongside. Right: the attention-only Rubin ceiling for Qwen3-4B, or GPQA Diamond accuracy for Kimi K3.
     </p>
 
     <div class="controls">
@@ -941,9 +941,9 @@ const MODELS = {
     presets: [
       { key: "bf16",     label: "Native \u00b7 MXFP4",     color: "#4a463c", bits: 16, ppl: null,  kl: 0.0,     qp: "\u2014",            kind: "bf16",
         desc: "Native 2.8T checkpoint \u2014 serves only as the KL teacher, not as a result row." },
-      { key: "lm",       label: "Lloyd-Max \u00b7 3-bit",  color: "#31607f", bits: 3,  ppl: 1.601, kl: 0.00800, gpqa: "83.16%", qp: "FP8/UE8M0 Q/P", kind: "k3v3", hw: true,
+      { key: "lm",       label: "Lloyd-Max \u00b7 3-bit",  color: "#31607f", bits: 3,  ppl: 1.601, kl: 0.00800, gpqa: "83.16%", seeds: "84.34 / 84.34 / 80.81", qp: "FP8/UE8M0 Q/P", kind: "k3v3", hw: true,
         desc: "Latent K3V3 on the shared 512-d c_KV of the 24 Gated-MLA layers; KDA states and the RoPE suffix stay native." },
-      { key: "oscar_lm", label: "OSCAR+LM \u00b7 3-bit",   color: "#8a6a14", bits: 3,  ppl: 1.564, kl: 0.00679, gpqa: "89.73%", qp: "FP8/UE8M0 Q/P", kind: "k3v3", hw: true,
+      { key: "oscar_lm", label: "OSCAR+LM \u00b7 3-bit",   color: "#8a6a14", bits: 3,  ppl: 1.564, kl: 0.00679, gpqa: "89.73%", seeds: "89.39 / 89.90 / 89.90", qp: "FP8/UE8M0 Q/P", kind: "k3v3", hw: true,
         desc: "One latent rotation, absorbed into the projections, in front of the latent codebook. Best PPL, KL\u2085\u2080 and GPQA." },
     ],
   },
@@ -1127,17 +1127,29 @@ function renderSpeed() {
   const sp = speedAt(hx.ctx);
   const ctxL = CTX_LABEL[hx.ctx];
   if (!M.speed) {
-    $("hxTokK").textContent = "Speed \u2014 attention-only tok/s";
-    $("hxTok").textContent = "\u2014";
-    $("hxTok").style.color = "#97927f";
-    $("hxTokSub").textContent = "roofline modeled for Qwen3-4B GQA decode \u2014 MLA latent not modeled";
+    $("hxTokK").textContent = "GPQA Diamond \u2014 3-seed mean \u2191";
     const host0 = $("hxBars");
     host0.innerHTML = "";
-    const note = document.createElement("div");
-    note.className = "bar-track na";
-    note.style.cssText = "height:76px;display:flex;align-items:center;";
-    note.innerHTML = '<span class="bar-ghost" style="position:static;white-space:normal;line-height:1.6;padding:0 14px;">The \u00a75 roofline is derived for Qwen3-4B GQA decode; the Kimi MLA-latent path is not modeled here.</span>';
-    host0.appendChild(note);
+    if (p.gpqa) {
+      $("hxTok").textContent = p.gpqa;
+      $("hxTok").style.color = p.color;
+      $("hxTokSub").textContent = p.key === "oscar_lm"
+        ? "+6.57 points over Lloyd-Max \u00b7 seeds " + p.seeds
+        : "seeds " + p.seeds;
+    } else {
+      $("hxTok").textContent = "\u2014";
+      $("hxTok").style.color = "#97927f";
+      $("hxTokSub").textContent = "native teacher \u2014 not part of the GPQA comparison";
+    }
+    const lmP = M.presets.find(x => x.key === "lm");
+    const osP = M.presets.find(x => x.key === "oscar_lm");
+    barRow(host0, "Lloyd-Max", parseFloat(lmP.gpqa), 100, lmP.color, { valText: lmP.gpqa });
+    barRow(host0, "OSCAR+LM", parseFloat(osP.gpqa), 100, osP.color, { valText: osP.gpqa });
+    const hint = document.createElement("div");
+    hint.className = "chart-hint";
+    hint.style.textAlign = "left";
+    hint.textContent = "Rubin speed roofline is modeled for Qwen3-4B GQA decode only \u2014 see \u00a75.";
+    host0.appendChild(hint);
     return;
   }
   $("hxTokK").textContent = "Speed \u2014 attention-only tok/s @ " + ctxL;
