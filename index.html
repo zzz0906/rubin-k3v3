@@ -646,16 +646,17 @@ effective         = 3.125 bit/value</code></pre>
         <tr><td>Qwen3.5-35B-A3B</td><td>Offline LM K3V3 + FP8/UE8M0 Q/P (no OSCAR)</td><td class="num">6.127</td><td class="num">0.02870</td><td class="num">82.49%</td></tr>
         <tr><td>Gemma4-12B</td><td>OSCAR + offline LM K3V3 + FP8/UE8M0 Q/P</td><td class="num"><strong>6.120</strong></td><td class="num"><strong>0.04806</strong></td><td class="num">62.29%</td></tr>
         <tr><td>Gemma4-12B</td><td>Offline LM K3V3 + FP8/UE8M0 Q/P (no OSCAR)</td><td class="num">6.388</td><td class="num">0.07572</td><td class="num">62.29%</td></tr>
-        <tr><td>Kimi K3</td><td>OSCAR + offline LM K3V3 + FP8/UE8M0 Q/P</td><td class="num"><strong>1.564</strong></td><td class="num"><strong>0.00679</strong></td><td class="num">—</td></tr>
-        <tr><td>Kimi K3</td><td>Offline LM K3V3 + FP8/UE8M0 Q/P (no OSCAR)</td><td class="num">1.601</td><td class="num">0.00800</td><td class="num">—</td></tr>
+        <tr><td>Kimi K3</td><td>OSCAR + offline LM K3V3 + FP8/UE8M0 Q/P</td><td class="num"><strong>1.564</strong></td><td class="num"><strong>0.00679</strong></td><td class="num"><strong>89.73%</strong></td></tr>
+        <tr><td>Kimi K3</td><td>Offline LM K3V3 + FP8/UE8M0 Q/P (no OSCAR)</td><td class="num">1.601</td><td class="num">0.00800</td><td class="num">83.16%</td></tr>
       </tbody>
     </table></div>
     <p>
       The public Kimi K3 checkpoint is a 2.8T-parameter, 1.56 TB MXFP4 model. Both result rows apply K3V3 directly to
       the MLA latent rather than expanding the 512-d latent into standard K/V and quantizing afterward. The native
       checkpoint supplies only the KL teacher distribution; it is not reported as a third result. Latent OSCAR lowers
-      PPL from 1.601 to 1.564 (about 2.3%) and KL₅₀ from 0.00800 to 0.00679 (about 15.2%). Three-seed GPQA will be
-      filled only after it completes. The full 2.8T measurement ran the public <code>moonshotai/Kimi-K3</code>
+      PPL from 1.601 to 1.564 (about 2.3%), lowers KL₅₀ from 0.00800 to 0.00679 (about 15.2%), and lifts the
+      three-seed GPQA mean from 83.16% to 89.73% (+6.57 points; OSCAR seeds 89.39 / 89.90 / 89.90 versus
+      84.34 / 84.34 / 80.81 without). The full 2.8T measurement ran the public <code>moonshotai/Kimi-K3</code>
       checkpoint on 32 H100s through a patched SGLang runtime; H100 serves as a numerical oracle here — the physical
       cache still reconstructs to BF16 (see <a href="#repro">Reproducibility</a>).
     </p>
