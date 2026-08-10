@@ -260,8 +260,10 @@
     <a href="#sec2">2&ensp;3-bit LUT-B</a>
     <a href="#sec3">3&ensp;Mapping onto attention</a>
     <a href="#sec4">4&ensp;Accuracy simulation</a>
-    <a href="#throughput">5&ensp;Speed projection</a>
-    <a href="#sec5">6&ensp;Takeaways</a>
+    <a href="#throughput">5&ensp;GQA / MLA model</a>
+    <a href="#estimate">6&ensp;Our estimate</a>
+    <a href="#limitations">7&ensp;Limitations</a>
+    <a href="#takeaways">8&ensp;Takeaways</a>
     <a href="#repro">Reproducibility</a>
     <a href="#refs">References</a>
   </nav>
@@ -275,7 +277,8 @@
     </div>
     <p class="fig-sub">
       Pick a model and a KV recipe. Left: measured KL₅₀ divergence from the BF16/native teacher @ 8K, with PPL
-      alongside. Right: the attention-only Rubin ceiling for Qwen3-4B, or GPQA Diamond accuracy for Kimi K3.
+      alongside. Right: two attention-only Rubin sensitivity scenarios for Qwen3-4B, or GPQA Diamond accuracy for
+      Kimi K3.
     </p>
 
     <div class="controls">
@@ -326,8 +329,9 @@
       window (≈3.63 b/val @ 8K). MXFP8 fixes the M tile at 128 while GQA4 single-token decode fills only 4 rows, but
       NVIDIA has not published the full-tile throughput of the LUT-B mode. The speed panel therefore shows a half-rate
       sensitivity case and a dense-FP8-rate case, not a Rubin prediction. Hardware is required to select the real one.
-      Excludes weights, MLP, sampling and scheduling. Full derivation in <a href="#throughput">§5</a>. Technique
-      definitions and primary citations: <a href="#ref-max">Lloyd–Max [1, 2]</a> and
+      Excludes weights, MLP, sampling and scheduling. General GQA/MLA model in <a href="#throughput">§5</a>, Qwen
+      estimate in <a href="#estimate">§6</a>, and limitations in <a href="#limitations">§7</a>. Technique definitions
+      and primary citations: <a href="#ref-max">Lloyd–Max [1, 2]</a> and
       <a href="#ref-oscar">OSCAR [3]</a>.
     </div>
   </section>
@@ -681,9 +685,40 @@ effective         = 3.125 bit/value</code></pre>
       cache still reconstructs to BF16 (see <a href="#repro">Reproducibility</a>).
     </p>
 
-    <h2 id="throughput"><span class="idx">5</span>Speed Projection: What Is Theoretically Achievable on Rubin?</h2>
+    <h2 id="throughput"><span class="idx">5</span>General Performance Model: GQA, MQA, and MLA</h2>
+    <p>
+      The common roofline is simple. Let <code>P_LUTB</code> be the unknown full-tile throughput of Rubin's LUT-B
+      mode, <code>B_HBM</code> the achieved memory bandwidth, and <code>R_local</code> the number of query rows on one
+      GPU that can reuse the same compressed B tile. For <code>T</code> query tokens:
+    </p>
+<pre><code>useful M occupancy = min(R_local × T / 128, 1)
+attention throughput = min(B_HBM × arithmetic intensity,
+                           P_LUTB × useful M occupancy)</code></pre>
+    <p>
+      The architecture controls both <code>R_local</code> and arithmetic intensity. The table assumes that one cache
+      tile is reused across the listed local heads; tensor/context parallelism can reduce that number.
+    </p>
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th>Architecture</th><th>Cache shared by</th><th>Useful A rows at T=1</th><th>Ideal cache AI</th><th>Small-M implication</th></tr></thead>
+      <tbody>
+        <tr><td>MHA</td><td>one query head</td><td><code>1</code></td><td><code>16 / b</code></td><td>most exposed</td></tr>
+        <tr><td>GQA</td><td><code>g = Hq / Hkv</code> query heads</td><td><code>g</code></td><td><code>16g / b</code></td><td>GQA4 fills 4 / 128 rows</td></tr>
+        <tr><td>MQA</td><td>all local query heads</td><td><code>H_local</code></td><td><code>16H_local / b</code></td><td>usually much better filled</td></tr>
+        <tr><td>MLA latent</td><td>all local heads sharing <code>c_KV</code></td><td><code>H_local</code></td><td>approximately <code>32H_local / b</code></td><td>does not inherit the GQA-ratio bottleneck</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      This is why the GQA4 warning must not be generalized to MLA. In an unsharded
+      <a href="https://huggingface.co/moonshotai/Kimi-K3/blob/main/config.json">Kimi K3</a> MLA layer, all 96 query
+      heads consume the same 512-d latent, so the nominal row occupancy is <strong>96 / 128 = 75%</strong>, not
+      4 / 128 = 3.125%. MLA therefore avoids the severe GQA4 underfill. It can still become compute-bound because its
+      shared latent has very high reuse; deployment sharding and the non-MLA parts of a hybrid model are handled
+      separately in <a href="#limitations">§7</a>.
+    </p>
 
-    <h3>5.1 Hardware baseline</h3>
+    <h2 id="estimate"><span class="idx">6</span>Our Estimate: Qwen3-4B GQA4 Sensitivity</h2>
+
+    <h3>6.1 Hardware baseline</h3>
     <p>
       First, consider the hardware of a single GPU. H100 and B200 can serve as bandwidth baselines, but they do not
       have SM107's <code>decompress::lut::b</code>; only Rubin can execute the K3V3 LUT-B path in this article
@@ -711,7 +746,7 @@ effective         = 3.125 bit/value</code></pre>
       FLOPs per decoded token are <code>4 × Q_heads × head_dim × context × layers</code>.
     </p>
 
-    <h3>5.2 If all three GPUs read BF16 KV</h3>
+    <h3>6.2 If all three GPUs read BF16 KV</h3>
     <p>With BF16 KV, arithmetic intensity is only 4 FLOP/B, so all three GPUs are clearly HBM-bound.</p>
     <div class="table-wrap"><table class="data">
       <thead><tr><th>GPU</th><th class="num">8K BF16 roofline</th><th class="num">8K attention-only tok/s</th><th class="num">32K BF16 roofline</th><th class="num">32K attention-only tok/s</th></tr></thead>
@@ -726,7 +761,7 @@ effective         = 3.125 bit/value</code></pre>
       declines as the context grows longer.
     </p>
 
-    <h3>5.3 The K3V3 roofline: compressed bytes, then the B-only tile detail</h3>
+    <h3>6.3 The K3V3 roofline: compressed bytes, then the B-only tile detail</h3>
     <p>
       After adding the BF16 sink/recent window to K3V3, effective storage is 3.628 bit/value at 8K and 3.251 bit/value
       at 32K; the corresponding arithmetic intensities are 17.64 / 19.69 FLOP/B.
@@ -796,7 +831,7 @@ effective         = 3.125 bit/value</code></pre>
       cannot tell us which regime real hardware occupies.
     </p>
 
-    <h3>5.4 What can be said before Rubin hardware?</h3>
+    <h3>6.4 Scenario summary</h3>
     <div class="table-wrap"><table class="data">
       <thead><tr><th class="num">Context</th><th class="num">Effective KV bits/value</th><th class="num">Byte-only HBM roofline</th><th class="num">Half-rate scenario</th><th class="num">Dense-rate scenario</th><th class="num">Scenario tok/s</th><th class="num">vs H100 BF16</th></tr></thead>
       <tbody>
@@ -806,28 +841,42 @@ effective         = 3.125 bit/value</code></pre>
     </table></div>
     <p>
       These endpoints are <strong>not a prediction interval</strong>. They show how strongly the answer depends on an
-      unpublished quantity. Actual performance may be lower because LUT-B instruction throughput, HBM efficiency,
-      collector reuse, descriptors, TMEM movement, the fused softmax pipeline, and scheduling efficiency are all
-      unmeasured on Rubin.
+      unpublished quantity. This table is specifically the Qwen3-4B GQA4, single-token, attention-only estimate; its
+      4 / 128 row occupancy must not be transferred to MLA.
     </p>
+
+    <h2 id="limitations"><span class="idx">7</span>Limitations: What Requires Rubin Hardware?</h2>
+    <ol>
+      <li><strong>LUT-B throughput is unpublished.</strong> CUDA 13.4 proves that the instruction compiles, but does
+        not reveal full-tile latency or throughput. The 8.75 and 17.5 PFLOP/s rows are sensitivity cases.</li>
+      <li><strong>Useful rows are schedule-local.</strong> GQA uses the query heads sharing one local KV tile; MLA can
+        use all local heads sharing one latent. Kimi K3 has 96 global heads, so an unsharded MLA operation nominally
+        fills 75% of M=128 and avoids the severe GQA4 bottleneck. Tensor/context parallelism may reduce the number of
+        heads available to one GPU, so the realized MLA occupancy still depends on deployment.</li>
+      <li><strong>HBM and collector efficiency are unknown.</strong> Achieved bandwidth, LUT/codebook traffic,
+        <code>B_KEEP → B_REUSE</code>, descriptors, swizzles, and TMEM movement must be measured together.</li>
+      <li><strong>The fused kernel is not implemented on Rubin.</strong> Softmax, synchronization, page-table
+        traversal, launch overhead, and scheduling can move the bottleneck away from the isolated QK/PV roofline.</li>
+      <li><strong>Hybrid models dilute layer-local gains.</strong> Kimi K3 has 24 Gated-MLA layers but 69 KDA layers
+        whose states remain native in this experiment; the MLA attention estimate is not an end-to-end model speedup.</li>
+    </ol>
     <div class="callout">
       <strong>The specific speedup cannot be known before hardware.</strong> We need at least the measured full-tile
-      <code>decompress::lut::b</code> throughput, small-M behavior, achieved HBM bandwidth, and GQA B-collector reuse
-      from a fused Rubin attention kernel. If GQA reuse is lost entirely, the 8K/32K bandwidth ceilings fall to about
-      97.0 / 108.3 TFLOP/s. Every number here is still an attention-only analytical ceiling, not end-to-end output
-      tok/s and not a Rubin measurement.
+      <code>decompress::lut::b</code> throughput, per-architecture local row packing, achieved HBM bandwidth, and
+      collector reuse from a fused Rubin attention kernel. Every number above is an analytical ceiling, not Rubin
+      silicon data.
     </div>
 
-    <h2 id="sec5"><span class="idx">6</span>What Does This Story Tell Us So Far?</h2>
+    <h2 id="takeaways"><span class="idx">8</span>What Does This Story Tell Us So Far?</h2>
     <ol>
       <li><strong>Ordinary 3-bit KV cannot carry serving.</strong> Naive uniform INT3 simply collapses — 8K PPL goes
         from 9.468 to 1504 and KL₅₀ to 5.15 — and no sink/recent window rescues it.</li>
       <li><strong>OSCAR + Lloyd-Max brings the quality back.</strong> Offline per-layer codebooks with
         rotation/clipping return Qwen3-4B to PPL ≈ 10.4 with the lowest KL₅₀, and lift Kimi K3's GPQA from 83.16% to
         89.73% — all under the ISA-dictated Q/P contract (E4M3 + UE8M0 block32).</li>
-      <li><strong>Dense KV-on-LUT-B has no legality blocker, but it has a decode-shape blocker.</strong> PTX does not
-        require B to be a static weight; <code>Kᵀ</code> and <code>V</code> can be dynamic compressed B, but B-only
-        plus MXFP8 M=128 limits single-token tile occupancy.</li>
+      <li><strong>The decode-shape issue is architecture-dependent.</strong> GQA4 exposes a severe 4 / 128 small-M
+        case. MLA shares one latent across all local query heads and therefore does not inherit that GQA-ratio
+        bottleneck, although sharding still controls its local occupancy.</li>
       <li><strong>Performance is not determined by bytes alone — and public information is insufficient.</strong>
         Counting bytes gives 29–32× H100 BF16. A half-rate LUT-B sensitivity case gives 20.4×, while a LUT-B mode
         matching the public dense FP8 rate remains at 29–32×. Only Rubin hardware can reveal the true tile throughput
@@ -839,7 +888,7 @@ effective         = 3.125 bit/value</code></pre>
 <pre><code>git clone https://github.com/FutureMLS-Lab/OSCAR.git &amp;&amp; cd OSCAR
 git checkout zhongzhu/oscar-int3-rubin-simulate</code></pre>
     <ul>
-      <li><strong>Speed tables (§5):</strong> <code>python3 rubin/rubin_k3v3_roofline.py --compare-hardware</code>
+      <li><strong>Speed tables (§6):</strong> <code>python3 rubin/rubin_k3v3_roofline.py --compare-hardware</code>
         — Python standard library only.</li>
       <li><strong>ISA compile proof:</strong> <code>rubin/run_compile_probes.py
         --cuda /usr/local/cuda-13.4</code> — needs the CUDA 13.4 preview toolchain; verifies the emitted SASS
@@ -960,7 +1009,7 @@ const MODELS = {
   },
 };
 
-/* Speed model (analytical attention-only roofline, validated against \u00a75) */
+/* Qwen3-4B attention-only sensitivity scenarios, matching \u00a76 */
 const MODEL = { layers: 36, qHeads: 32, kvHeads: 8, headDim: 128 };
 const HI_WINDOW = 320;                       // BF16 sink 64 + recent 256
 const TILE_UTIL = 4 / 128;                   // MXFP8 M=128, 4 useful GQA rows
@@ -1162,7 +1211,7 @@ function renderSpeed() {
     const hint = document.createElement("div");
     hint.className = "chart-hint";
     hint.style.textAlign = "left";
-    hint.textContent = "Rubin speed roofline is modeled for Qwen3-4B GQA decode only \u2014 see \u00a75.";
+    hint.textContent = "Rubin speed scenarios are modeled for Qwen3-4B GQA decode only \u2014 see \u00a76.";
     host0.appendChild(hint);
     return;
   }
@@ -1208,7 +1257,7 @@ function renderCaption() {
     } else {
       khtml = p.desc + " On the public 2.8T checkpoint (32\u00d7H100, patched SGLang): PPL <b>" + p.ppl.toFixed(3) +
         "</b> \u00b7 KL\u2085\u2080 <b>" + p.kl.toFixed(5) + "</b> \u00b7 GPQA <b>" + p.gpqa +
-        "</b> (three-seed mean). The speed panel is modeled for Qwen3-4B only \u2014 see \u00a75.";
+        "</b> (three-seed mean). The speed panel is modeled for Qwen3-4B only \u2014 see \u00a76.";
     }
     $("hxCaption").innerHTML = khtml;
     return;
