@@ -1300,8 +1300,7 @@ function renderCaption() {
     html = p.desc + " At " + ctxL + ", a half-dense-rate LUT-B sensitivity case gives <b>" + fmtTok(sp.halfRate) +
       "</b> attention tok/s (" + fmtX(sp.halfRate / sp.h100) + " H100 BF16), while a LUT-B mode matching Rubin's " +
       "public 17.5-PFLOP/s dense FP8 rate gives <b>" + fmtTok(sp.denseRate) + "</b> (" +
-      fmtX(sp.denseRate / sp.h100) + "). These are modeling endpoints, not a prediction interval. The actual " +
-      "full-tile LUT-B throughput is unpublished and must be measured on Rubin hardware.";
+      fmtX(sp.denseRate / sp.h100) + "). These are modeling endpoints, not a prediction interval.";
     if (p.key === "uniform") {
       html += " <b>Same storage and the same modeled speed scenarios \u2014 but KL\u2085\u2080 explodes to " +
         p.kl.toFixed(2) + " nats/token (PPL \u00d7" + (p.ppl / BF16_PPL).toFixed(0) +
