@@ -851,7 +851,7 @@ L ≤ 11.81M tokens</code></pre>
       however, so compressed KV must use the <code>Q × Kᵀ</code> / <code>P × V</code> orientation.
     </p>
     <p>
-      A reader pointed us to the newest decode kernel, and the observation is correct: the
+      While auditing the newest decode path, we found that the
       <a href="https://github.com/flashinfer-ai/flashinfer/blob/b1d95851675b8799d623df4d5a7d6eac3254b3ff/flashinfer/cute_dsl/attention/gqa_decode_paged.py#L222-L259">FlashInfer SM100 CuTe GQA decode kernel</a>
       explicitly sets <code>mma_tile_m=128</code>, with K as GEMM1's A and Q as its B, and V as GEMM2's A and P as
       its B — it fills A's M direction with sequence/head-dim and packs GQA heads × prediction tokens into B's N
