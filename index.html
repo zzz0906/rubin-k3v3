@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Can Vera Rubin Support 3-bit KV under 1M Tokens?</title>
-<meta name="description" content="A 1M-token capacity and performance study of Vera Rubin 3-bit LUT-B for weight and KV-cache bottlenecks, with measured accuracy simulations and hardware-dependent roofline scenarios.">
+<title>Can Vera Rubin Support 3-bit KV for a 10M-Token Context?</title>
+<meta name="description" content="A TP8 HBM-capacity study of Vera Rubin 3-bit LUT-B: a 10M-token MLA KV target, weight and KV-cache bottlenecks, measured accuracy simulations, and hardware-dependent roofline scenarios.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;0,6..72,700;1,6..72,400;1,6..72,500&display=swap" rel="stylesheet">
@@ -62,7 +62,7 @@
   h1.title {
     font-family: var(--serif);
     font-weight: 600;
-    font-size: clamp(12.5px, 2.35vw, 32px);
+    font-size: clamp(10.5px, 2.35vw, 32px);
     line-height: 1.2;
     letter-spacing: -.005em;
     margin: 0 auto 10px;
@@ -244,7 +244,7 @@
 
 <header class="paper">
   <div class="wrap">
-    <h1 class="title">Can Vera Rubin Support 3-bit KV under 1M Tokens?</h1>
+    <h1 class="title">Can Vera Rubin Support 3-bit KV for a 10M-Token Context?</h1>
     <div class="meta">August 7, 2026</div>
     <hr class="head-rule">
   </div>
@@ -350,10 +350,10 @@
           Offline Lloyd–Max<span class="cite"><a href="#ref-max">[1]</a><a href="#ref-lloyd">[2]</a></span> codebooks
           — plus OSCAR<span class="cite"><a href="#ref-oscar">[3]</a></span> rotation and a BF16 sink/recent window —
           bring it back to ~10.4.</li>
-        <li><strong>What happens at 1M tokens?</strong> For the Qwen3-4B GQA geometry, one BF16 KV sequence is about
-          154.6 GB; K3V3 reduces it to about 30.2 GB. The attention-only sensitivity cases span 20.4× to 33.6× H100
-          BF16, but public PTX proves legality rather than throughput — only Rubin hardware can determine the actual
-          speedup.</li>
+        <li><strong>Why use 10M?</strong> Under a Kimi K3 MLA TP8 thought experiment, perfectly sharded 1.56-TB
+          weights leave 93 GB per 288-GB Rubin. A 10M-token K3V3 latent plus native RoPE uses 78.7 GB, leaving
+          <strong>14.3 GB per GPU</strong> for runtime. The zero-reserve mathematical ceiling is 11.81M; the current
+          checkpoint itself is still a 1M-context model.</li>
       </ol>
     </div>
 
@@ -735,9 +735,47 @@ attention throughput = min(B_HBM × arithmetic intensity,
       separately in <a href="#limitations">§7</a>.
     </p>
 
-    <h2 id="estimate"><span class="idx">6</span>Our Estimate: Qwen3-4B GQA4 Sensitivity</h2>
+    <h2 id="estimate"><span class="idx">6</span>Our Estimates: TP8 MLA Capacity and Qwen GQA4 Speed</h2>
 
-    <h3>6.1 Hardware baseline</h3>
+    <h3>6.1 TP8 MLA HBM capacity ceiling</h3>
+    <p>
+      The 10M headline is a rounded capacity target below the mathematical maximum, not a claim that Kimi K3 currently
+      supports a 10M context. Assume eight 288-GB Rubin GPUs, a perfectly sharded 1.56-TB MXFP4 checkpoint, 24
+      Gated-MLA layers, a 512-d K3V3 latent, and a native 64-d BF16 RoPE suffix:
+    </p>
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th>Quantity</th><th class="num">Value</th><th>Derivation</th></tr></thead>
+      <tbody>
+        <tr><td>TP8 aggregate HBM</td><td class="num">2.304 TB</td><td><code>8 × 288 GB</code></td></tr>
+        <tr><td>Weight footprint per GPU</td><td class="num">195 GB</td><td><code>1.56 TB / 8</code></td></tr>
+        <tr><td>Ideal free HBM per GPU</td><td class="num">93 GB</td><td><code>288 − 195 GB</code></td></tr>
+        <tr><td>K3V3 latent per MLA layer/token</td><td class="num">200 B</td><td><code>512 × 3.125 / 8</code></td></tr>
+        <tr><td>Native RoPE suffix per layer/token</td><td class="num">128 B</td><td><code>64 × 2</code></td></tr>
+        <tr><td>All 24 MLA layers per token</td><td class="num">7.872 KB</td><td><code>24 × (200 + 128)</code></td></tr>
+        <tr><td><strong>Zero-reserve context ceiling</strong></td><td class="num"><strong>11.81M</strong></td><td>includes the 320-token BF16 window</td></tr>
+      </tbody>
+    </table></div>
+<pre><code>24 × [320 × 1152 B + (L − 320) × 328 B] ≤ 93 GB
+L ≤ 11.81M tokens</code></pre>
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th>Per-GPU runtime reserve</th><th class="num">KV budget</th><th class="num">Context ceiling</th></tr></thead>
+      <tbody>
+        <tr><td>0 GB — mathematical maximum</td><td class="num">93.0 GB</td><td class="num">11.81M</td></tr>
+        <tr><td>9.3 GB — 10% of free HBM</td><td class="num">83.7 GB</td><td class="num">10.63M</td></tr>
+        <tr><td><strong>14.3 GB — 10M headline</strong></td><td class="num"><strong>78.7 GB</strong></td><td class="num"><strong>10.00M</strong></td></tr>
+        <tr><td>20 GB</td><td class="num">73.0 GB</td><td class="num">9.27M</td></tr>
+        <tr><td>30 GB</td><td class="num">63.0 GB</td><td class="num">8.00M</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      Ordinary tensor parallelism does not multiply this context limit by eight: the shared MLA latent is commonly
+      replicated across TP ranks. A separate sequence/context-parallel KV sharding design could raise the aggregate
+      mathematical ceiling toward 94.5M, but would introduce a different communication and kernel problem. Loaded
+      weight memory, allocator fragmentation, workspaces, activations, and the model's native 1M positional limit all
+      make 11.81M an upper bound rather than a deployable configuration.
+    </p>
+
+    <h3>6.2 Hardware baseline</h3>
     <p>
       First, consider the hardware of a single GPU. H100 and B200 can serve as bandwidth baselines, but they do not
       have SM107's <code>decompress::lut::b</code>; only Rubin can execute the K3V3 LUT-B path in this article
@@ -765,7 +803,7 @@ attention throughput = min(B_HBM × arithmetic intensity,
       FLOPs per decoded token are <code>4 × Q_heads × head_dim × context × layers</code>.
     </p>
 
-    <h3>6.2 If all three GPUs read BF16 KV</h3>
+    <h3>6.3 If all three GPUs read BF16 KV</h3>
     <p>With BF16 KV, arithmetic intensity is only 4 FLOP/B, so all three GPUs are clearly HBM-bound.</p>
     <div class="table-wrap"><table class="data">
       <thead><tr><th>GPU</th><th class="num">8K BF16 roofline</th><th class="num">8K attention-only tok/s</th><th class="num">32K BF16 roofline</th><th class="num">32K attention-only tok/s</th></tr></thead>
@@ -784,7 +822,7 @@ attention throughput = min(B_HBM × arithmetic intensity,
       attention-only BF16 bandwidth ceilings are 21.7 tok/s on H100, 51.7 on B200, and 142.3 on Rubin.
     </p>
 
-    <h3>6.3 The K3V3 roofline: compressed bytes, then the B-only tile detail</h3>
+    <h3>6.4 The K3V3 roofline: compressed bytes, then the B-only tile detail</h3>
     <p>
       After adding the BF16 sink/recent window to K3V3, effective storage is 3.628 bit/value at 8K, 3.251 at 32K, and
       3.129 at 1M; the corresponding arithmetic intensities are 17.64 / 19.69 / 20.45 FLOP/B. At 1M this reduces the
@@ -856,7 +894,7 @@ attention throughput = min(B_HBM × arithmetic intensity,
       cannot tell us which regime real hardware occupies.
     </p>
 
-    <h3>6.4 Scenario summary</h3>
+    <h3>6.5 Scenario summary</h3>
     <div class="table-wrap"><table class="data">
       <thead><tr><th class="num">Context</th><th class="num">Effective KV bits/value</th><th class="num">Byte-only HBM roofline</th><th class="num">Half-rate scenario</th><th class="num">Dense-rate scenario</th><th class="num">Scenario tok/s</th><th class="num">vs H100 BF16</th></tr></thead>
       <tbody>
@@ -885,8 +923,8 @@ attention throughput = min(B_HBM × arithmetic intensity,
         traversal, launch overhead, and scheduling can move the bottleneck away from the isolated QK/PV roofline.</li>
       <li><strong>Hybrid models dilute layer-local gains.</strong> Kimi K3 has 24 Gated-MLA layers but 69 KDA layers
         whose states remain native in this experiment; the MLA attention estimate is not an end-to-end model speedup.</li>
-      <li><strong>1M is a systems target, not a measured quality point.</strong> The title's 1M-token claim refers to
-        capacity and analytical decode scenarios. PPL/KL were measured at 8K and GPQA does not validate 1M-context
+      <li><strong>10M is an HBM capacity target, not a supported or measured context.</strong> The current Kimi K3
+        checkpoint exposes a 1M positional limit. PPL/KL were measured at 8K, and GPQA does not validate million-token
         retrieval or generation quality.</li>
     </ol>
     <div class="callout">
@@ -909,6 +947,9 @@ attention throughput = min(B_HBM × arithmetic intensity,
       <li><strong>The decode-shape issue is architecture-dependent.</strong> GQA4 exposes a severe 4 / 128 small-M
         case. MLA shares one latent across all local query heads and therefore does not inherit that GQA-ratio
         bottleneck, although sharding still controls its local occupancy.</li>
+      <li><strong>The 10M headline leaves limited but nonzero HBM headroom.</strong> Perfect weight sharding gives a
+        zero-workspace ceiling of 11.81M; choosing 10M consumes 78.7 of the 93 GB free per GPU and leaves 14.3 GB,
+        before considering the model's native 1M positional limit.</li>
       <li><strong>Performance is not determined by bytes alone — and public information is insufficient.</strong>
         At 1M, the Qwen GQA4 scenarios span 20.4×–33.6× H100 BF16. Only Rubin hardware can reveal the true tile
         throughput and concrete speedup.</li>
