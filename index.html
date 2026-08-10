@@ -218,6 +218,11 @@
 
   .refs { font-family: var(--serif); font-size: 14.5px; }
   .refs li { margin-bottom: 7px; }
+  .cite {
+    margin-left: 3px; white-space: nowrap; vertical-align: super;
+    font-family: var(--sans); font-size: .62em; font-weight: 500;
+  }
+  .cite a { margin-left: 2px; }
 
   footer {
     border-top: 1px solid var(--line-2); margin-top: 26px; padding: 26px 0 44px;
@@ -326,7 +331,8 @@
       window (≈3.63 b/val @ 8K), and the ceiling already includes the B-only LUT constraint: MXFP8 fixes the M tile
       at 128 while GQA4 single-token decode fills 4 rows, capping compute at 273.4 TFLOP/s. Excludes weights, MLP,
       sampling and scheduling. Full ablations in <a href="#sec4">§4</a>; full derivation with
-      B200, efficiency bands and byte-only bounds in <a href="#throughput">§5</a>.
+      B200, efficiency bands and byte-only bounds in <a href="#throughput">§5</a>. Technique definitions and primary
+      citations: <a href="#ref-max">Lloyd–Max [1, 2]</a> and <a href="#ref-oscar">OSCAR [3]</a>.
     </div>
   </section>
 
@@ -342,12 +348,21 @@
           operands; Q and post-softmax P stay MXFP8 in A, so both attention multiplies consume compressed KV
           directly.</li>
         <li><strong>Why not naive INT3?</strong> Outliers destroy it: Qwen3-4B's 8K PPL jumps from 9.468 to 1504.
-          Offline Lloyd-Max codebooks — plus <a href="https://arxiv.org/abs/2605.17757">OSCAR</a> rotation and a
-          BF16 sink/recent window — bring it back to ~10.4.</li>
+          Offline Lloyd–Max<span class="cite"><a href="#ref-max">[1]</a><a href="#ref-lloyd">[2]</a></span> codebooks
+          — plus OSCAR<span class="cite"><a href="#ref-oscar">[3]</a></span> rotation and a BF16 sink/recent window —
+          bring it back to ~10.4.</li>
         <li><strong>How much faster?</strong> Bytes alone say 29–32× H100 BF16, but the LUT is B-only and MXFP8's
           M tile is 128 against 4 GQA rows: the credible single-token ceiling is about <strong>20.4×</strong>
           (<strong>12.3–16.4×</strong> at 60–80% efficiency). 30× is a byte-only bound.</li>
       </ol>
+    </div>
+
+    <div class="callout" id="techniques">
+      <strong>Technique note.</strong> <strong>Lloyd–Max</strong> is the classical nonuniform scalar-quantization
+      algorithm: for a fixed number of levels, it alternates nearest-center assignment and centroid updates to
+      minimize mean-squared reconstruction error<span class="cite"><a href="#ref-max">[1]</a><a href="#ref-lloyd">[2]</a></span>.
+      <strong>OSCAR</strong> (Offline Spectral Covariance-Aware Rotation) instead learns fixed, attention-aware
+      per-layer rotations and clipping thresholds offline before low-bit KV-cache quantization<span class="cite"><a href="#ref-oscar">[3]</a></span>.
     </div>
 
     <h2 id="sec1"><span class="idx">1</span>Introduction: What Exactly Changed with Vera Rubin?</h2>
@@ -423,7 +438,8 @@ total             = 200 bytes
 effective         = 3.125 bit/value</code></pre>
     <p>
       The LUT does not require uniform spacing, so it can hold nonuniform centroids such as those produced by
-      Lloyd-Max. This is also key to why 3 bits may still preserve quality.
+      Lloyd–Max<span class="cite"><a href="#ref-max">[1]</a><a href="#ref-lloyd">[2]</a></span>. This is also key to
+      why 3 bits may still preserve quality.
     </p>
 
     <h3>2.2 What do the CUDA 13.4 compile tests tell us?</h3>
@@ -518,7 +534,7 @@ effective         = 3.125 bit/value</code></pre>
       allowing one K/V tile to serve four Q heads.
     </p>
 
-    <h3>3.3 Lloyd-Max: put the eight levels where they are needed</h3>
+    <h3>3.3 Lloyd–Max: put the eight levels where they are needed<span class="cite"><a href="#ref-max">[1]</a><a href="#ref-lloyd">[2]</a></span></h3>
     <p>
       Three bits can represent only eight values. Basic uniform quantization spaces those eight levels evenly. If most
       values are near zero and only a few outliers are large, many levels are wasted in nearly empty regions while the
@@ -536,7 +552,7 @@ effective         = 3.125 bit/value</code></pre>
       its 3-bit index. GQA fits separate eight-value K and V codebooks per layer. MLA fits one latent codebook per layer.
     </p>
 
-    <h3>3.4 OSCAR: spread the spikes before giving them to 3 bits</h3>
+    <h3>3.4 OSCAR: spread the spikes before giving them to 3 bits<span class="cite"><a href="#ref-oscar">[3]</a></span></h3>
     <p>
       Lloyd-Max decides where to put the eight levels, but 3-bit quantization remains difficult when a few dimensions
       are much larger than the rest. The simplest interpretation of
@@ -850,6 +866,9 @@ git checkout zhongzhu/oscar-int3-rubin-simulate</code></pre>
 
     <h2 id="refs">References</h2>
     <ol class="refs">
+      <li id="ref-max">J. Max, <a href="https://doi.org/10.1109/TIT.1960.1057548">“Quantizing for Minimum Distortion,”</a> <i>IRE Transactions on Information Theory</i>, 1960.</li>
+      <li id="ref-lloyd">S. P. Lloyd, <a href="https://doi.org/10.1109/TIT.1982.1056489">“Least Squares Quantization in PCM,”</a> <i>IEEE Transactions on Information Theory</i>, 1982 (work originally circulated in 1957).</li>
+      <li id="ref-oscar">Z. Zhou et al., <a href="https://arxiv.org/abs/2605.17757">“OSCAR: Offline Spectral Covariance-Aware Rotation for 2-bit KV Cache Quantization,”</a> arXiv:2605.17757, 2026.</li>
       <li><a href="https://developer.nvidia.com/blog/inside-nvidia-rubin-gpu-architecture-powering-the-era-of-agentic-ai/">NVIDIA: Inside NVIDIA Rubin GPU Architecture</a></li>
       <li><a href="https://developer.nvidia.com/blog/inside-the-nvidia-rubin-platform-six-new-chips-one-ai-supercomputer/">NVIDIA: Inside the Vera Rubin Platform</a></li>
       <li><a href="https://www.nvidia.com/en-us/data-center/vera-rubin-nvl72/">NVIDIA: Vera Rubin NVL72 specs</a></li>
