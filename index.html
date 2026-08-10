@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Can Vera Rubin Support 3-bit KV Attention? An Accuracy Simulation Reveals the Truth</title>
-<meta name="description" content="Mapping 3-bit LUT-B KV caches onto attention for NVIDIA Vera Rubin: accuracy simulation with Lloyd-Max codebooks and OSCAR rotation, CUDA 13.4 compile probes, and operand-corrected roofline estimates.">
+<title>Can Vera Rubin Support 3-bit KV under 1M Tokens?</title>
+<meta name="description" content="A 1M-token capacity and performance study of Vera Rubin 3-bit LUT-B for weight and KV-cache bottlenecks, with measured accuracy simulations and hardware-dependent roofline scenarios.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;0,6..72,700;1,6..72,400;1,6..72,500&display=swap" rel="stylesheet">
@@ -58,17 +58,18 @@
     padding: 64px 0 8px;
     text-align: center;
   }
+  header.paper .wrap { max-width: 1200px; padding: 0 12px; }
   h1.title {
     font-family: var(--serif);
     font-weight: 600;
-    font-size: clamp(25px, 3vw, 33px);
-    line-height: 1.3;
+    font-size: clamp(12.5px, 2.35vw, 32px);
+    line-height: 1.2;
     letter-spacing: -.005em;
     margin: 0 auto 10px;
-    max-width: 860px;
+    max-width: none;
+    white-space: nowrap;
     color: var(--ink);
   }
-  h1.title .subtitle-line { display: block; font-size: .72em; font-weight: 500; font-style: italic; color: var(--ink-2); margin-top: 6px; }
   .meta { font-family: var(--serif); font-size: 14px; color: var(--muted); font-style: italic; }
   .head-rule { border: 0; border-top: 1.5px solid var(--ink-2); margin: 26px auto 0; opacity: .55; }
 
@@ -243,9 +244,7 @@
 
 <header class="paper">
   <div class="wrap">
-    <h1 class="title">Can Vera Rubin Support 3-bit KV Attention?
-      <span class="subtitle-line">An Accuracy Simulation Reveals the Truth</span>
-    </h1>
+    <h1 class="title">Can Vera Rubin Support 3-bit KV under 1M Tokens?</h1>
     <div class="meta">August 7, 2026</div>
     <hr class="head-rule">
   </div>
@@ -326,7 +325,7 @@
       its 24 Gated-MLA layers; Kimi PPL follows the native last-2048-NLL protocol and is not comparable across
       models. <b>Speed.</b> Analytical attention-only roofline
       for Qwen3-4B decode (36 layers · 32 Q / 8 KV heads · head dim 128). K3V3 stores 3.125 bits/value plus the BF16
-      window (≈3.63 b/val @ 8K). MXFP8 fixes the M tile at 128 while GQA4 single-token decode fills only 4 rows, but
+      window (≈3.63 b/val @ 8K and 3.13 @ 1M). MXFP8 fixes the M tile at 128 while GQA4 single-token decode fills only 4 rows, but
       NVIDIA has not published the full-tile throughput of the LUT-B mode. The speed panel therefore shows a half-rate
       sensitivity case and a dense-FP8-rate case, not a Rubin prediction. Hardware is required to select the real one.
       Excludes weights, MLP, sampling and scheduling. General GQA/MLA model in <a href="#throughput">§5</a>, Qwen
@@ -344,17 +343,17 @@
       <ol>
         <li><strong>What does Rubin provide?</strong> 22 TB/s of HBM4, plus a LUT-B Tensor Core that decompresses
           3-bit indices into eight E4M3 values inside the matrix multiply.</li>
-        <li><strong>How can attention use it?</strong> Store <code>Kᵀ</code> and <code>V</code> as 3-bit LUT-B
-          operands; Q and post-softmax P stay MXFP8 in A, so both attention multiplies consume compressed KV
-          directly.</li>
+        <li><strong>Where does it help?</strong> Static 3-bit weights are the natural B operand, but dynamic
+          <code>Kᵀ</code> and <code>V</code> are legal too. Q and post-softmax P stay MXFP8 in A, so Rubin can target
+          both model-weight bandwidth and the repeatedly reread KV-cache bottleneck.</li>
         <li><strong>Why not naive INT3?</strong> Outliers destroy it: Qwen3-4B's 8K PPL jumps from 9.468 to 1504.
           Offline Lloyd–Max<span class="cite"><a href="#ref-max">[1]</a><a href="#ref-lloyd">[2]</a></span> codebooks
           — plus OSCAR<span class="cite"><a href="#ref-oscar">[3]</a></span> rotation and a BF16 sink/recent window —
           bring it back to ~10.4.</li>
-        <li><strong>How much faster?</strong> Bytes alone permit 29–32× H100 BF16. The B-only, M=128 tile may lower
-          that number: a half-dense-rate LUT-B scenario gives about 20.4×, while a LUT-B mode matching the public
-          17.5-PFLOP/s dense FP8 rate remains bandwidth-bound at 29–32×. Public PTX proves legality, not throughput;
-          only Rubin hardware can determine the actual speedup.</li>
+        <li><strong>What happens at 1M tokens?</strong> For the Qwen3-4B GQA geometry, one BF16 KV sequence is about
+          154.6 GB; K3V3 reduces it to about 30.2 GB. The attention-only sensitivity cases span 20.4× to 33.6× H100
+          BF16, but public PTX proves legality rather than throughput — only Rubin hardware can determine the actual
+          speedup.</li>
       </ol>
     </div>
 
@@ -468,6 +467,26 @@ effective         = 3.125 bit/value</code></pre>
       These probes prove compiler acceptance and SASS emission, not runtime correctness on Rubin. CUDA 13.4 Developer
       Preview also explicitly prohibits using preview performance data to characterize the hardware.
     </div>
+
+    <h3>2.3 3-bit weights are the natural LUT-B case — and KV uses the same primitive</h3>
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th>Target</th><th>MXFP8 A</th><th>3-bit LUT-B</th><th>Bottleneck it addresses</th><th>What remains difficult</th></tr></thead>
+      <tbody>
+        <tr><td>Weight W3A8</td><td>activation <code>X</code></td><td>offline-packed <code>Wᵀ</code></td><td>model-weight capacity and decode weight bandwidth</td><td>quantization quality and small-batch M occupancy</td></tr>
+        <tr><td>KV K3V3</td><td><code>Q</code>, then <code>P</code></td><td>dynamic <code>Kᵀ</code>, then <code>V</code></td><td>long-context KV capacity and repeatedly reread HBM traffic</td><td>runtime packing, paged layout, orientation, and row packing</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      Weight is the simpler mapping: <code>Y = X × Wᵀ</code> already places a static, offline-transposed weight matrix
+      in B, so each 64 × 8 granule can be prepacked as 512 indices plus one eight-value E4M3 LUT. This is
+      <strong>3-bit storage with E4M3 reconstruction</strong>, not ordinary INT3 arithmetic.
+    </p>
+    <p>
+      The same instruction is not restricted to static weights. Dynamic <code>Kᵀ</code> and <code>V</code> can also
+      be B operands, which means Rubin can apply the same in-MMA lookup to the KV-cache bottleneck: long-context
+      decode repeatedly reads historical KV, so reducing those bytes directly targets both capacity and HBM traffic.
+      KV is harder to implement, not less relevant.
+    </p>
 
     <h2 id="sec3"><span class="idx">3</span>What We Did: Mapping LUT-B onto Attention</h2>
     <p>
@@ -760,11 +779,16 @@ attention throughput = min(B_HBM × arithmetic intensity,
       Here, TFLOP/s remains constant as context length changes because BF16 arithmetic intensity is fixed; token/s
       declines as the context grows longer.
     </p>
+    <p>
+      At 1M tokens, one Qwen3-4B BF16 KV sequence occupies about <strong>154.6 GB</strong> across 36 layers. The
+      attention-only BF16 bandwidth ceilings are 21.7 tok/s on H100, 51.7 on B200, and 142.3 on Rubin.
+    </p>
 
     <h3>6.3 The K3V3 roofline: compressed bytes, then the B-only tile detail</h3>
     <p>
-      After adding the BF16 sink/recent window to K3V3, effective storage is 3.628 bit/value at 8K and 3.251 bit/value
-      at 32K; the corresponding arithmetic intensities are 17.64 / 19.69 FLOP/B.
+      After adding the BF16 sink/recent window to K3V3, effective storage is 3.628 bit/value at 8K, 3.251 at 32K, and
+      3.129 at 1M; the corresponding arithmetic intensities are 17.64 / 19.69 / 20.45 FLOP/B. At 1M this reduces the
+      Qwen3-4B KV footprint from 154.6 GB to about <strong>30.2 GB</strong>.
     </p>
     <div class="table-wrap"><table class="data">
       <thead><tr><th>GPU</th><th class="num">8K compressed-byte roofline</th><th class="num">8K tok/s</th><th class="num">32K compressed-byte roofline</th><th class="num">32K tok/s</th><th>Can run natively</th></tr></thead>
@@ -805,11 +829,11 @@ attention throughput = min(B_HBM × arithmetic intensity,
       GQA ratio of four, so one shared K/V tile can pack at most four Q heads into four rows:
     </p>
     <div class="table-wrap"><table class="data">
-      <thead><tr><th>Full-tile LUT-B scenario</th><th class="num">M occupancy</th><th class="num">Logical tile cap</th><th class="num">8K bound</th><th class="num">32K bound</th></tr></thead>
+      <thead><tr><th>Full-tile LUT-B scenario</th><th class="num">M occupancy</th><th class="num">Logical tile cap</th><th class="num">8K bound</th><th class="num">32K bound</th><th class="num">1M bound</th></tr></thead>
       <tbody>
-        <tr><td>Half dense rate: 8.75 PFLOP/s<br><span class="faint">sensitivity case, not a specification</span></td><td class="num">4 / 128 = <strong>3.125%</strong></td><td class="num">273.4 TFLOP/s</td><td class="num">273.4 TFLOP/s<br>tile-bound</td><td class="num">273.4 TFLOP/s<br>tile-bound</td></tr>
-        <tr><td>Public dense FP8 rate: 17.5 PFLOP/s<br><span class="faint">assumes LUT-B matches dense FP8</span></td><td class="num">4 / 128 = <strong>3.125%</strong></td><td class="num">546.9 TFLOP/s</td><td class="num">388.1 TFLOP/s<br>HBM-bound</td><td class="num">433.1 TFLOP/s<br>HBM-bound</td></tr>
-        <tr><td><strong>Rubin LUT-B hardware</strong></td><td class="num">schedule-dependent</td><td class="num"><strong>unknown</strong></td><td class="num"><strong>requires measurement</strong></td><td class="num"><strong>requires measurement</strong></td></tr>
+        <tr><td>Half dense rate: 8.75 PFLOP/s<br><span class="faint">sensitivity case, not a specification</span></td><td class="num">4 / 128 = <strong>3.125%</strong></td><td class="num">273.4 TFLOP/s</td><td class="num">273.4<br>tile-bound</td><td class="num">273.4<br>tile-bound</td><td class="num">273.4<br>tile-bound</td></tr>
+        <tr><td>Public dense FP8 rate: 17.5 PFLOP/s<br><span class="faint">assumes LUT-B matches dense FP8</span></td><td class="num">4 / 128 = <strong>3.125%</strong></td><td class="num">546.9 TFLOP/s</td><td class="num">388.1<br>HBM-bound</td><td class="num">433.1<br>HBM-bound</td><td class="num">450.0<br>HBM-bound</td></tr>
+        <tr><td><strong>Rubin LUT-B hardware</strong></td><td class="num">schedule-dependent</td><td class="num"><strong>unknown</strong></td><td class="num"><strong>measure</strong></td><td class="num"><strong>measure</strong></td><td class="num"><strong>measure</strong></td></tr>
       </tbody>
     </table></div>
     <p>
@@ -823,8 +847,9 @@ attention throughput = min(B_HBM × arithmetic intensity,
       MXFP8 fixes M at 128</strong>.
     </p>
     <p>
-      The full-tile LUT-B throughput that separates the two regimes is <strong>12.42 PFLOP/s at 8K</strong> and
-      <strong>13.86 PFLOP/s at 32K</strong>. Below those values this model is tile-bound; above them it is HBM-bound.
+      The full-tile LUT-B throughput that separates the two regimes is <strong>12.42 PFLOP/s at 8K</strong>,
+      <strong>13.86 PFLOP/s at 32K</strong>, and <strong>14.40 PFLOP/s at 1M</strong>. Below those values this model is
+      tile-bound; above them it is HBM-bound.
       In the 8.75-PFLOP/s sensitivity case, the crossover occurs at 5.15 effective bits/value (4.71 body bits at 8K
       after accounting for the BF16 window). If LUT-B instead sustains the public 17.5-PFLOP/s dense rate, the
       crossover falls to 2.57 effective bits/value and the current K3V3 format remains bandwidth-bound. Public PTX
@@ -837,6 +862,7 @@ attention throughput = min(B_HBM × arithmetic intensity,
       <tbody>
         <tr><td class="num">8K</td><td class="num">3.628</td><td class="num">388.1 TFLOP/s</td><td class="num">273.4 TFLOP/s</td><td class="num">388.1 TFLOP/s</td><td class="num">56.59K / 80.32K</td><td class="num">20.4× / 29.0×</td></tr>
         <tr><td class="num">32K</td><td class="num">3.251</td><td class="num">433.1 TFLOP/s</td><td class="num">273.4 TFLOP/s</td><td class="num">433.1 TFLOP/s</td><td class="num">14.15K / 22.41K</td><td class="num">20.4× / 32.3×</td></tr>
+        <tr><td class="num">1M</td><td class="num">3.129</td><td class="num">450.0 TFLOP/s</td><td class="num">273.4 TFLOP/s</td><td class="num">450.0 TFLOP/s</td><td class="num">442 / 728</td><td class="num">20.4× / 33.6×</td></tr>
       </tbody>
     </table></div>
     <p>
@@ -859,6 +885,9 @@ attention throughput = min(B_HBM × arithmetic intensity,
         traversal, launch overhead, and scheduling can move the bottleneck away from the isolated QK/PV roofline.</li>
       <li><strong>Hybrid models dilute layer-local gains.</strong> Kimi K3 has 24 Gated-MLA layers but 69 KDA layers
         whose states remain native in this experiment; the MLA attention estimate is not an end-to-end model speedup.</li>
+      <li><strong>1M is a systems target, not a measured quality point.</strong> The title's 1M-token claim refers to
+        capacity and analytical decode scenarios. PPL/KL were measured at 8K and GPQA does not validate 1M-context
+        retrieval or generation quality.</li>
     </ol>
     <div class="callout">
       <strong>The specific speedup cannot be known before hardware.</strong> We need at least the measured full-tile
@@ -874,13 +903,15 @@ attention throughput = min(B_HBM × arithmetic intensity,
       <li><strong>OSCAR + Lloyd-Max brings the quality back.</strong> Offline per-layer codebooks with
         rotation/clipping return Qwen3-4B to PPL ≈ 10.4 with the lowest KL₅₀, and lift Kimi K3's GPQA from 83.16% to
         89.73% — all under the ISA-dictated Q/P contract (E4M3 + UE8M0 block32).</li>
+      <li><strong>One LUT-B primitive addresses two bandwidth problems.</strong> W3A8 is the natural static-weight
+        mapping; dynamic K3V3 is harder, but directly reduces the KV capacity and repeated-read traffic that dominate
+        long-context decode.</li>
       <li><strong>The decode-shape issue is architecture-dependent.</strong> GQA4 exposes a severe 4 / 128 small-M
         case. MLA shares one latent across all local query heads and therefore does not inherit that GQA-ratio
         bottleneck, although sharding still controls its local occupancy.</li>
       <li><strong>Performance is not determined by bytes alone — and public information is insufficient.</strong>
-        Counting bytes gives 29–32× H100 BF16. A half-rate LUT-B sensitivity case gives 20.4×, while a LUT-B mode
-        matching the public dense FP8 rate remains at 29–32×. Only Rubin hardware can reveal the true tile throughput
-        and concrete speedup.</li>
+        At 1M, the Qwen GQA4 scenarios span 20.4×–33.6× H100 BF16. Only Rubin hardware can reveal the true tile
+        throughput and concrete speedup.</li>
     </ol>
 
     <h2 id="repro">Reproducibility</h2>
@@ -1015,7 +1046,7 @@ const HI_WINDOW = 320;                       // BF16 sink 64 + recent 256
 const TILE_UTIL = 4 / 128;                   // MXFP8 M=128, 4 useful GQA rows
 const LUTB_HALF_RATE = 8.75e15;              // sensitivity case, not a specification
 const RUBIN_DENSE_FP8 = 17.5e15;             // NVIDIA published dense FP8/FP6 rate
-const CTX_LABEL = { 8192: "8K", 32768: "32K" };
+const CTX_LABEL = { 8192: "8K", 32768: "32K", 1048576: "1M" };
 const flopsPerTok = (ctx) => 4 * MODEL.qHeads * MODEL.headDim * ctx * MODEL.layers;
 const bf16Bytes = (ctx) => 2 * MODEL.kvHeads * MODEL.headDim * 2 * ctx * MODEL.layers;
 const effBitsCtx = (ctx) => (HI_WINDOW * 16 + (ctx - HI_WINDOW) * 3.125) / ctx;
@@ -1031,7 +1062,7 @@ function speedAt(ctx) {
   return { fl, bB, bK, h100, rubinBF16, byte, halfRate, denseRate };
 }
 
-const hx = { model: "qwen", preset: "oscar_lm", ctx: 8192 };
+const hx = { model: "qwen", preset: "oscar_lm", ctx: 1048576 };
 const curModel = () => MODELS[hx.model];
 const curPreset = () => {
   const M = curModel();
@@ -1295,7 +1326,7 @@ function render() {
   });
   const M = curModel();
   seg("segPreset", M.presets.map(p => [p.key, p.label]), hx.preset, (k) => { hx.preset = k; render(); });
-  seg("segCtx", [[8192, "8K"], [32768, "32K"]], hx.ctx, (k) => { hx.ctx = +k; render(); });
+  seg("segCtx", [[8192, "8K"], [32768, "32K"], [1048576, "1M"]], hx.ctx, (k) => { hx.ctx = +k; render(); });
   $("ctxCtrl").style.display = M.speed ? "" : "none";
   renderAccuracy();
   renderSpeed();
