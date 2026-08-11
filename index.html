@@ -922,6 +922,10 @@ L ≤ 11.81M tokens</code></pre>
         <code>B_KEEP → B_REUSE</code>, descriptors, swizzles, and TMEM movement must be measured together.</li>
       <li><strong>The fused kernel is not implemented on Rubin.</strong> Softmax, synchronization, page-table
         traversal, launch overhead, and scheduling can move the bottleneck away from the isolated QK/PV roofline.</li>
+      <li><strong>Rotation overhead is not included in the speed estimate.</strong> The current fake-quant path applies
+        dense <code>R</code> and <code>Rᵀ</code> around quantization. A production implementation should fold fixed
+        transforms into Q/K/V or MLA up/down projections where possible, or fuse a structured rotation into the
+        one-time cache write. Any remaining rotation, clipping, and index-assignment work must be measured separately.</li>
       <li><strong>QAT is a promising future direction.</strong> Quantization-aware training could jointly adapt the
         model to the exact 3-bit indices, E4M3 LUT centroids, optional UE8M0 B scales, clipping, and absorbed
         projections instead of correcting a frozen checkpoint after training. This report contains no QAT result.</li>
