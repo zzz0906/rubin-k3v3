@@ -253,7 +253,7 @@
 <header class="paper">
   <div class="wrap">
     <h1 class="title">Vera Rubin LUT-B: An Accuracy-First Study of 3-bit Weight, Activation, and KV</h1>
-    <div class="meta">August 13, 2026 &nbsp;·&nbsp; <a href="https://www.zhongzhuzhou.org/rubin-k3v3-zh/">中文</a></div>
+    <div class="meta">August 13, 2026</div>
     <hr class="head-rule">
   </div>
 </header>
@@ -280,12 +280,12 @@
   <section class="fig-card" id="weight-explorer" aria-label="Interactive weight accuracy and storage comparison">
     <div class="fig-head">
       <span class="fig-tag">Figure 1 · Interactive Weight</span>
-      <span class="fig-title">One physical W3A8 format, very different numerical outcomes</span>
+      <span class="fig-title">W3 algorithm oracle: same legacy scale layout, very different outcomes</span>
     </div>
     <p class="fig-sub">
-      Select a model, context, and method. Left: measured WikiText-2 PPL and KL₅₀. Right: the exact Rubin-shaped
-      weight payload and byte reduction. Every strict W3 row uses the same K64×N8 tile; method quality, not storage,
-      separates the dots.
+      Select a model, context, and method. Left: measured WikiText-2 PPL and KL₅₀. Right: payload and byte roofline.
+      This historical algorithm sweep holds the original K32-SFB oracle fixed; the CUDA 13.4 contract audit below
+      separately measures the 3.125-bit reference and 3.25-bit native-SFB paths.
     </p>
     <div class="controls">
       <div class="ctrl"><div class="ctrl-label">Model</div><div class="seg" id="wSegModel"></div></div>
@@ -305,7 +305,7 @@
       </div>
       <div class="panel">
         <div class="panel-head">
-          <div class="stat-k">Weight-only bandwidth ceiling</div>
+          <div class="stat-k">Legacy K32-SFB weight-read ceiling</div>
           <div class="stat-v" id="wxBits">–</div>
           <div class="stat-s" id="wxRatio">–</div>
         </div>
@@ -314,10 +314,10 @@
       </div>
     </div>
     <div class="fig-note">
-      <b>Physical contract.</b> A linear weight is logically W[N,K], while GEMM consumes B=Wᵀ[K,N]. One tile selects
-      64 consecutive K input channels × 8 consecutive N output channels: 512 3-bit indices, one 8-entry E4M3 LUT,
-      and 16 UE8M0 scales (one per N column and K32 half), totaling 3.375 bits/weight. The figure reports measured
-      numerical quality and exact payload arithmetic—not achieved Rubin GEMM throughput.
+      <b>Contract correction.</b> A linear weight is W[N,K] and B=Wᵀ[K,N]. The CUDA reference tile is 512 indices +
+      one E4M3 LUT = 3.125 bits/weight. Optional native block scaling adds one UE8M0 SFB per N row (8 bytes/tile),
+      giving 3.25 bits/weight. The 3.375-bit figure above uses the earlier 16-factor K32-SFB oracle and must not be
+      labeled the exact PTX scale-B layout. See the controlled audit in <a href="#scale-audit">§3.1</a>.
     </div>
   </section>
 
@@ -404,9 +404,10 @@
     <div class="tldr" id="tldr">
       <h2>TL;DR</h2>
       <ol>
-        <li><strong>Weight is the natural LUT-B target.</strong> Static W can be fitted and packed offline. The strict
-          W3A8 payload is 3.375 bits/weight, but accuracy depends strongly on the algorithm: at 128K, Random-H64 +
-          GPTQ reaches Qwen/Gemma PPL 10.504/7.034, while uniform W3 collapses to 162.126/19733.351.</li>
+        <li><strong>Weight is the natural LUT-B target, but scale contracts matter.</strong> CUDA 13.4 defines a
+          3.125-bit reference LUT and an optional 3.25-bit native-SFB path. Our original 3.375-bit K32-SFB sweep is an
+          algorithm oracle, not the exact PTX scale layout. A folded tensor-global scale helps Qwen but hurts Gemma;
+          native SFB is the most consistent hardware-exact option.</li>
         <li><strong>A3 is not a second free low-bit operand.</strong> Public PTX exposes LUT decompression only for B.
           W3 already occupies B, so native A3 would force W back to FP8 (W8A3). We keep A in E4M3 with UE8M0 K32
           scales and do not invent an unsupported A3 speed estimate.</li>
@@ -552,7 +553,8 @@ effective         = 3.125 bit/value</code></pre>
 
     <h3>3.1 Accuracy</h3>
     <p>
-      All strict rows below use identical storage—no sparse residual and no hidden higher-precision outlier path.
+      The algorithm-sweep rows below use the same legacy 3.375-bit K32-SFB oracle—no sparse residual and no hidden
+      higher-precision outlier path. They remain useful for comparing methods, but are not the exact PTX scale-B layout.
       PPL/KL is measured on approximately 131K WikiText-2 tokens; the 128K protocol is one 131072-token block with
       256 fixed KL₅₀ samples. Lower is better. These are hardware-constrained adaptations of GPTQ
       <span class="cite"><a href="#ref-gptq">[4]</a></span>, AWQ<span class="cite"><a href="#ref-awq">[5]</a></span>,
@@ -563,6 +565,7 @@ effective         = 3.125 bit/value</code></pre>
       Uniform uses the standard scalar-quantization baseline<span class="cite"><a href="#ref-quant">[9]</a></span>.
     </p>
     <div class="table-wrap"><table class="data">
+      <caption>Legacy K32-SFB algorithm oracle; not the exact CUDA 13.4 scale-B layout</caption>
       <thead><tr><th>128K method</th><th class="num">Qwen PPL / KL₅₀</th><th class="num">Gemma PPL / KL₅₀</th><th class="num">MiniMax routed PPL / KL₅₀</th></tr></thead>
       <tbody>
         <tr><td>BF16 W + BF16 A</td><td class="num"><strong>8.482 / 0.00000</strong></td><td class="num"><strong>5.771 / 0.00000</strong></td><td class="num"><strong>4.124 / 0.00000</strong></td></tr>
@@ -585,12 +588,34 @@ effective         = 3.125 bit/value</code></pre>
       numerically unstable even though it uses exactly the same bits.
     </p>
 
+    <h4 id="scale-audit">3.1.1 CUDA 13.4 Scale-contract Audit</h4>
+    <p>
+      We reran the same H64 + K64 LUT-GPTQ method on the same 16×8192 blocks and 256 KL₅₀ samples, changing only
+      LUT-B scale metadata. PTX exposes no standalone global numeric-scale operand; “global” below is one FP32 scale
+      per tensor that must be folded into a projection or output epilogue.
+    </p>
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th>LUT-B B contract</th><th class="num">Bits/W</th><th class="num">Qwen PPL / KL₅₀</th><th class="num">Gemma PPL / KL₅₀</th><th>Kernel implication</th></tr></thead>
+      <tbody>
+        <tr><td>Reference LUT only</td><td class="num"><strong>3.125</strong></td><td class="num">12.171 / 0.31051</td><td class="num">8.087 / 0.41466</td><td>No SFB</td></tr>
+        <tr><td>Reference LUT + tensor-global scale</td><td class="num"><strong>3.125*</strong></td><td class="num">12.001 / 0.29054</td><td class="num">8.028 / 0.43362</td><td>Folded/epilogue FP32 scale</td></tr>
+        <tr><td>Native optional SFB (`scale_B=1×N`)</td><td class="num"><strong>3.250</strong></td><td class="num"><strong>11.601 / 0.25205</strong></td><td class="num"><strong>7.991 / 0.32454</strong></td><td>8 UE8M0 factors/tile</td></tr>
+        <tr><td>Native SFB + tensor-global scale</td><td class="num"><strong>3.250*</strong></td><td class="num">11.663 / <strong>0.24696</strong></td><td class="num">8.005 / 0.38117</td><td>SFB plus folded/epilogue scale</td></tr>
+        <tr><td>Legacy K32-SFB oracle</td><td class="num">3.375</td><td class="num">11.504 / 0.24232</td><td class="num">7.924 / 0.34988</td><td>16 factors/tile; not exact PTX shape</td></tr>
+      </tbody>
+    </table></div>
+    <p class="faint">
+      *One 4-byte FP32 scale per tensor is amortized and not included in per-weight bits. Global scale is not a
+      universal fix: Qwen improves, Gemma KL worsens. Native SFB gives the strongest consistent hardware-exact result.
+    </p>
+
     <h3>3.2 Kernel organization</h3>
 <pre><code>A[M,K] × B[K,N], where B = Wᵀ
 one B tile = W[n:n+8, k:k+64]
-payload    = 512 × 3-bit indices + 8 × E4M3 LUT + 16 × UE8M0 scales
-scale      = one per output column and K32 half
-total      = 216 B = 3.375 bits/weight</code></pre>
+reference  = 192 B indices + 8 B LUT             = 200 B = 3.125 bit/W
+native SFB = reference + 8 × UE8M0 (scale_B=1×N) = 208 B = 3.250 bit/W
+global     = one FP32 scale/tensor, folded outside the LUT-B instruction
+legacy     = reference + 16 K32-SFB factors       = 216 B = 3.375 bit/W</code></pre>
     <div class="table-wrap"><table class="data">
       <thead><tr><th>Method family</th><th>Offline work</th><th>Runtime change beyond MXFP8-A × LUT-B-B</th></tr></thead>
       <tbody>
@@ -603,24 +628,22 @@ total      = 216 B = 3.375 bits/weight</code></pre>
 
     <h3>3.3 Simulation estimate</h3>
     <div class="table-wrap"><table class="data">
-      <thead><tr><th>Weight-read comparison</th><th>Roofline formula</th><th class="num">Theoretical ceiling</th></tr></thead>
+      <thead><tr><th>Rubin Weight Contract</th><th class="num">Bits/W</th><th class="num">vs H100 BF16</th><th class="num">vs B200 BF16</th><th class="num">vs Rubin BF16</th></tr></thead>
       <tbody>
-        <tr><td>Rubin W3 vs H100 BF16</td><td><code>(22 / 3.35) × (16 / 3.375)</code></td><td class="num"><strong>31.1×</strong></td></tr>
-        <tr><td>Rubin W3 vs B200 BF16</td><td><code>(22 / 8.0) × (16 / 3.375)</code></td><td class="num"><strong>13.0×</strong></td></tr>
-        <tr><td>Rubin W3 vs Rubin BF16</td><td><code>16 / 3.375</code></td><td class="num">4.74×</td></tr>
-        <tr><td>Rubin W3 vs Rubin FP8</td><td><code>8 / 3.375</code></td><td class="num">2.37×</td></tr>
+        <tr><td>Reference LUT only</td><td class="num">3.125</td><td class="num"><strong>33.6×</strong></td><td class="num"><strong>14.1×</strong></td><td class="num">5.12×</td></tr>
+        <tr><td>Native optional SFB</td><td class="num">3.250</td><td class="num"><strong>32.3×</strong></td><td class="num"><strong>13.5×</strong></td><td class="num">4.92×</td></tr>
+        <tr><td>Legacy K32-SFB oracle</td><td class="num">3.375</td><td class="num">31.1×</td><td class="num">13.0×</td><td class="num">4.74×</td></tr>
       </tbody>
     </table></div>
     <div class="callout">
-      <strong>The large number is 31.1× versus H100 BF16</strong> for a purely weight-read-bound operation using
-      public peak HBM bandwidth. The corresponding B200 BF16 ceiling is 13.0×. This is the weight analogue of the
-      KV byte roofline—not an end-to-end model speedup.
+      <strong>The corrected byte ceilings are 33.6×/14.1× for the 3.125-bit reference and 32.3×/13.5× for native
+      SFB</strong>, relative to H100/B200 BF16. These are pure weight-read rooflines, not end-to-end speedups.
     </div>
     <p>
       These ceilings assume every useful byte is weight traffic, public peak HBM is achieved, and the LUT-B MMA keeps
       up. Real weight GEMMs may be compute-bound; A reads, output writes, small-M occupancy, routing, H64, and MLP
       scheduling reduce the gain. NVIDIA has not published achieved LUT-B throughput, so only Rubin measurement can
-      turn 31.1×/13.0× into a kernel or end-to-end number.
+      turn these byte ratios into a kernel or end-to-end number.
     </p>
 
     <h2 id="activation"><span class="idx">4</span>Activation Quantization: Keep A8; Do Not Invent A3</h2>
