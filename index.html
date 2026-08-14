@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Vera Rubin LUT-B: An Accuracy-First Study of 3-bit Weight, Activation, and KV</title>
-<meta name="description" content="An accuracy-first study of Vera Rubin LUT-B for W3A8 weights, the unsupported A3 path, and K3V3 cache, including exact K64xN8 grouping and the path to a 10M-token MLA capacity target.">
+<meta name="description" content="An accuracy-first study of Vera Rubin LUT-B for W3A8 weights, the unsupported A3 path, and K3V3 cache, including exact K64xN8 grouping, kernel bounds, and request-level HBM capacity arithmetic.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;0,6..72,700;1,6..72,400;1,6..72,500&display=swap" rel="stylesheet">
@@ -268,9 +268,9 @@
     <a href="#sec2">2&ensp;Hardware contract</a>
     <a href="#weight">3&ensp;Weight W3A8</a>
     <a href="#activation">4&ensp;Activation</a>
-    <a href="#kv">5&ensp;KV · Path to 10M</a>
+    <a href="#kv">5&ensp;KV Cache</a>
     <a href="#limitations">6&ensp;Limitations</a>
-    <a href="#takeaways">7&ensp;Takeaways</a>
+    <a href="#takeaways">7&ensp;Conclusions</a>
     <a href="#repro">Reproducibility</a>
     <a href="#refs">References</a>
   </nav>
@@ -328,8 +328,8 @@
     </div>
     <p class="fig-sub">
       Pick a model and a KV recipe. Left: measured KL₅₀ divergence from the BF16/native teacher @ 8K, with PPL
-      alongside. Right: two attention-only Rubin sensitivity scenarios for Qwen3-4B, or single-copy versus
-      dual-layout TP8 MLA capacity for Kimi K3.
+      alongside. Right: two attention-only Rubin sensitivity scenarios for Qwen3-4B, or the TP8 HBM context bound
+      per concurrent Kimi K3 request.
     </p>
 
     <div class="controls">
@@ -346,7 +346,7 @@
         <div class="seg" id="segCtx"></div>
       </div>
       <div class="ctrl" id="layoutCtrl">
-        <div class="ctrl-label">MLA physical layout (capacity panel)</div>
+        <div class="ctrl-label">MLA physical layout (HBM bound)</div>
         <div class="seg" id="segLayout"></div>
       </div>
       <div class="ctrl" id="klCtrl">
@@ -389,11 +389,11 @@
       window (≈3.63 b/val @ 8K and 3.13 @ 1M). MXFP8 fixes the M tile at 128 while GQA4 single-token decode fills only 4 rows, but
       NVIDIA has not published the full-tile throughput of the LUT-B mode. The speed panel therefore shows a half-rate
       sensitivity case and a dense-FP8-rate case, not a Rubin prediction. Hardware is required to select the real one.
-      Excludes weights, MLP, sampling and scheduling. General GQA/MLA model in <a href="#throughput">§5.3</a>, Qwen
-      estimate in <a href="#estimate">§5.4</a>, and limitations in <a href="#limitations">§6</a>. Technique definitions
-      Kimi capacity uses TP8, 195 GB weights/GPU, a 14.3 GB runtime reserve, and either one canonical latent requiring
-      retiling (10.0M) or two direct physical layouts (6.21M). Technique definitions
-      and primary citations: <a href="#ref-max">Lloyd–Max [1, 2]</a> and
+      Excludes weights, MLP, sampling and scheduling. The GQA/MLA model, Qwen estimate, and request-capacity arithmetic
+      are all in <a href="#throughput">§5.3</a>; limitations are in <a href="#limitations">§6</a>. Kimi HBM arithmetic
+      uses TP8, 195 GB weights/GPU, a 14.3 GB runtime reserve, and either one canonical latent requiring retiling or
+      two direct physical layouts. Technique definitions and primary citations:
+      <a href="#ref-max">Lloyd–Max [1, 2]</a> and
       <a href="#ref-oscar">OSCAR [3]</a>.
     </div>
   </section>
@@ -405,18 +405,18 @@
       <h2>TL;DR</h2>
       <ol>
         <li><strong>Weight is the natural LUT-B target, but scale contracts matter.</strong> CUDA 13.4 defines a
-          3.125-bit LUT payload; paired SFB+global uses 3.25 bits/W for one K64 or 3.375 for two K32. Two-K32 gives
-          consistently better RMS² quality, while the H64 winner depends on model/context. All Qwen/Gemma/MiniMax
-          paired-scale cells are now measured.</li>
-        <li><strong>A3 is not a second free low-bit operand.</strong> Public PTX exposes LUT decompression only for B.
-          W3 already occupies B, so native A3 would force W back to FP8 (W8A3). We keep A in E4M3 with UE8M0 K32
-          scales and do not invent an unsupported A3 speed estimate.</li>
+          3.125-bit LUT payload; paired SFB+global uses 3.25 bits/W for one K64 or 3.375 for two K32. Two-K32 usually
+          lowers RMS² PPL but can worsen KL₅₀; H64 is also model/context dependent. All Qwen/Gemma/MiniMax paired-scale
+          cells are now measured.</li>
+        <li><strong>A3 is unsupported as matrix A in the current LUT-B MMA.</strong> Public PTX exposes lookup
+          decompression only for B. W3 already occupies that operand, so W3A3 cannot be encoded; the supported pairing
+          studied here is E4M3 A with UE8M0 K32 scales and a 3-bit LUT-B operand.</li>
         <li><strong>KV can use the same primitive, but its layout is harder.</strong> QK groups 8 tokens × 64 head
           channels; PV groups 64 tokens × 8 value channels. Offline Lloyd–Max and optional OSCAR preserve Qwen
           K3V3 quality near PPL 10.4, whereas per-tile uniform K3V3 reaches PPL 1504.</li>
-        <li><strong>The 10M result has a layout condition.</strong> Kimi's shared <code>c_KV</code> needs opposite
-          QK/PV orientations. A single 200-B latent copy reaches about 10M tokens only with runtime retiling; storing
-          two directly consumable layouts raises the latent payload to 400 B/token and lowers capacity to about 6.2M.</li>
+        <li><strong>Context capacity is a shared HBM budget, not model support.</strong> Under the stated TP8 memory
+          assumptions, the single-request arithmetic is 10.0M tokens with runtime retiling or 6.21M with two direct
+          layouts; each pool is divided across concurrent requests, and the checkpoint's own positional limit remains.</li>
       </ol>
     </div>
 
@@ -440,18 +440,18 @@
         <tr><td>NVLink bandwidth</td><td class="num">3.6 TB/s</td><td class="num">260 TB/s switch bandwidth</td></tr>
       </tbody>
     </table></div>
-    <h3>1.2 Why do we care so much about the KV cache?</h3>
+    <h3>1.2 Why low-bit weights and KV both matter</h3>
     <p>
       The community often summarizes inference with one line: <strong>prefill is compute-bound, decode is
       bandwidth-bound</strong>. The Medium article on
       <a href="https://medium.com/@asheesh.goja/prefill-is-compute-decode-is-bandwidth-the-architectural-case-for-disaggregated-llm-inference-92c8b36d1a88">disaggregated inference</a>
-      uses this framework to explain why HBM, KV movement, and prefill/decode separation are becoming increasingly important.
+      uses this framework to explain why HBM traffic and prefill/decode separation are increasingly important.
     </p>
     <p>
-      In long-context decoding, every generated token requires the historical K/V to be read again. The smaller the
-      model, the longer the context, and the larger the batch, the more likely KV traffic is to become the primary
-      bottleneck rather than a supporting concern. Rubin's 22 TB/s of HBM4 bandwidth therefore matters, but even more
-      interestingly, it also introduces a new ISA that reduces bytes per value.
+      Decode repeatedly reads two large data sources: model weights for every linear layer and historical K/V for
+      attention. Weight traffic is roughly fixed per generated token and is especially important at low batch;
+      KV traffic grows with context and eventually dominates long-context serving. LUT-B matters because the same
+      3-bit B-operand format can reduce bytes for both static weights and the dynamically written KV cache.
     </p>
 
     <h3>1.3 Probing the Rubin ISA with CUDA 13.4</h3>
@@ -518,11 +518,6 @@ effective         = 3.125 bit/value</code></pre>
       <code>mxf4nvf4</code>. The hardware-valid Q/P contract for K3V3 attention is therefore
       <strong>E4M3 + UE8M0 block32</strong>.
     </p>
-    <div class="callout">
-      These probes prove compiler acceptance and SASS emission, not runtime correctness on Rubin. CUDA 13.4 Developer
-      Preview also explicitly prohibits using preview performance data to characterize the hardware.
-    </div>
-
     <h3>2.3 3-bit weights are the natural LUT-B case — and KV uses the same primitive</h3>
     <div class="table-wrap"><table class="data">
       <thead><tr><th>Target</th><th>MXFP8 A</th><th>3-bit LUT-B</th><th>Bottleneck it addresses</th><th>What remains difficult</th></tr></thead>
@@ -587,9 +582,9 @@ effective         = 3.125 bit/value</code></pre>
       </tbody>
     </table></div>
     <p>
-      H64 and RMS² respond differently to schedule and scale granularity. Two-K32+global consistently improves RMS²
-      over K64+global, while H64 is model/context dependent. H64 is not free: W rotates offline, but A needs the
-      matching runtime transform.
+      H64 and RMS² respond differently to schedule and scale granularity. Two-K32+global improves both RMS² metrics
+      for Qwen/Gemma and lowers MiniMax PPL, but MiniMax KL₅₀ favors one-K64. H64 is also model/context dependent and
+      is not free: W rotates offline, but A needs the matching runtime transform.
     </p>
 
     <h3>3.2 Kernel organization</h3>
@@ -613,31 +608,30 @@ two K32    = reference + 16 K32-SFB factors       = 216 B = 3.375 bit/W</code></
     <div class="table-wrap"><table class="data">
       <thead><tr><th>Rubin Weight Contract</th><th class="num">Bits/W</th><th class="num">vs H100 BF16</th><th class="num">vs B200 BF16</th><th class="num">vs Rubin BF16</th></tr></thead>
       <tbody>
-        <tr><td>Reference LUT only</td><td class="num">3.125</td><td class="num"><strong>33.6×</strong></td><td class="num"><strong>14.1×</strong></td><td class="num">5.12×</td></tr>
-        <tr><td>Native optional SFB</td><td class="num">3.250</td><td class="num"><strong>32.3×</strong></td><td class="num"><strong>13.5×</strong></td><td class="num">4.92×</td></tr>
-        <tr><td>Two-K32 SFA/SFB schedule</td><td class="num">3.375</td><td class="num">31.1×</td><td class="num">13.0×</td><td class="num">4.74×</td></tr>
+        <tr><td>One K64: native SFB + folded global scale</td><td class="num">3.250</td><td class="num">32.31×</td><td class="num">13.54×</td><td class="num">4.92×</td></tr>
+        <tr><td>Two K32: native SFB + folded global scale</td><td class="num">3.375</td><td class="num">31.10×</td><td class="num">13.04×</td><td class="num">4.74×</td></tr>
       </tbody>
     </table></div>
     <div class="table-wrap"><table class="data">
       <caption>One-K64 versus two-K32 under paired SFB + global scale</caption>
       <thead><tr><th>Schedule</th><th class="num">SFB/tile</th><th class="num">Bits/W</th><th class="num">MMA instructions/K64</th><th>Measured tendency</th></tr></thead>
       <tbody>
-        <tr><td>One K64</td><td class="num">8</td><td class="num">3.25</td><td class="num">1</td><td>Higher byte ceiling; coarser local scaling</td></tr>
-        <tr><td>Two K32</td><td class="num">16</td><td class="num">3.375</td><td class="num">2</td><td>Better RMS² quality; H64 depends on model/context</td></tr>
+        <tr><td>One K64</td><td class="num">8</td><td class="num">3.25</td><td class="num">1</td><td>Higher byte ceiling; MiniMax RMS² has lower KL₅₀</td></tr>
+        <tr><td>Two K32</td><td class="num">16</td><td class="num">3.375</td><td class="num">2</td><td>Finer scaling; Qwen/Gemma RMS² improve, MiniMax trades PPL for KL₅₀</td></tr>
       </tbody>
     </table></div>
-    <div class="callout">
-      <strong>The corrected byte ceilings are 33.6×/14.1× for the 3.125-bit reference and 32.3×/13.5× for native
-      SFB</strong>, relative to H100/B200 BF16. These are pure weight-read rooflines, not end-to-end speedups.
-    </div>
     <p>
-      These ceilings assume every useful byte is weight traffic, public peak HBM is achieved, and the LUT-B MMA keeps
+      Each value is calculated directly from
+      <code>(22 TB/s ÷ baseline bandwidth) × (16 bits ÷ stored bits/weight)</code>. For example, one-K64 versus H100 is
+      <code>(22 ÷ 3.35) × (16 ÷ 3.25) = 32.31×</code>; versus B200 it is
+      <code>(22 ÷ 8) × (16 ÷ 3.25) = 13.54×</code>. These are weight-read bounds: they assume every useful byte is
+      weight traffic, public peak HBM is achieved, and the LUT-B MMA keeps
       up. Real weight GEMMs may be compute-bound; A reads, output writes, small-M occupancy, routing, H64, and MLP
       scheduling reduce the gain. NVIDIA has not published achieved LUT-B throughput, so only Rubin measurement can
       turn these byte ratios into a kernel or end-to-end number.
     </p>
 
-    <h2 id="activation"><span class="idx">4</span>Activation Quantization: Keep A8; Do Not Invent A3</h2>
+    <h2 id="activation"><span class="idx">4</span>Activation Quantization: Keep A8; A3 Is Unsupported</h2>
 
     <h3>4.1 A8 accuracy</h3>
     <p>
@@ -653,7 +647,7 @@ two K32    = reference + 16 K32-SFB factors       = 216 B = 3.375 bit/W</code></
       </tbody>
     </table></div>
 
-    <h3>4.2 Why A3 has no kernel estimate</h3>
+    <h3>4.2 Why current LUT-B does not support A3 as matrix A</h3>
     <div class="table-wrap"><table class="data">
       <thead><tr><th>Layout</th><th>Matrix A</th><th>Matrix B</th><th>Result</th></tr></thead>
       <tbody>
@@ -664,12 +658,12 @@ two K32    = reference + 16 K32-SFB factors       = 216 B = 3.375 bit/W</code></
       </tbody>
     </table></div>
     <div class="callout">
-      There is intentionally no A3 performance chart. Activation is produced dynamically per token and would need
-      online code assignment and packing; more importantly, public Rubin PTX provides no dual-LUT MMA. Modeling A3
-      beside W3 or KV3 would describe a kernel that cannot be encoded by the current ISA.
+      Current public Rubin PTX has no LUT-A or dual-LUT MMA, so A3 cannot serve as matrix A beside W3/KV3 in B.
+      Activations are also produced dynamically and would require online assignment and packing. This is an
+      unsupported operand configuration, so it has no performance chart.
     </div>
 
-    <h2 id="kv"><span class="idx">5</span>KV Cache Quantization <span class="faint">— Path to 10M-Token Context</span></h2>
+    <h2 id="kv"><span class="idx">5</span>KV Cache Quantization <span class="faint">— Accuracy, Speed, and Capacity Bounds</span></h2>
 
     <h3 id="sec3">5.1 Kernel Mapping: LUT-B onto Attention</h3>
     <p>
@@ -925,47 +919,7 @@ attention throughput = min(B_HBM × arithmetic intensity,
       separately in <a href="#limitations">§6</a>.
     </p>
 
-    <h3 id="estimate">5.4 Simulation Estimates: TP8 MLA Capacity and Qwen GQA4 Speed</h3>
-
-    <h4 id="capacity">5.4.1 TP8 MLA HBM capacity ceiling</h4>
-    <p>
-      The 10M headline is a rounded capacity target below the mathematical maximum, not a claim that Kimi K3 currently
-      supports a 10M context. It is also conditional on storing one canonical packed latent and retiling it at runtime
-      for the opposite QK/PV orientation. Assume eight 288-GB Rubin GPUs, a perfectly sharded 1.56-TB MXFP4
-      checkpoint, 24 Gated-MLA layers, a 512-d K3V3 latent, and a native 64-d BF16 RoPE suffix:
-    </p>
-    <div class="table-wrap"><table class="data">
-      <thead><tr><th>Quantity</th><th class="num">Value</th><th>Derivation</th></tr></thead>
-      <tbody>
-        <tr><td>TP8 aggregate HBM</td><td class="num">2.304 TB</td><td><code>8 × 288 GB</code></td></tr>
-        <tr><td>Weight footprint per GPU</td><td class="num">195 GB</td><td><code>1.56 TB / 8</code></td></tr>
-        <tr><td>Ideal free HBM per GPU</td><td class="num">93 GB</td><td><code>288 − 195 GB</code></td></tr>
-        <tr><td>Single canonical K3V3 latent</td><td class="num">200 B</td><td><code>512 × 3.125 / 8</code>; runtime retile required</td></tr>
-        <tr><td>Two direct K-like/V-like layouts</td><td class="num">400 B</td><td><code>2 × 200 B</code>; no orientation retile</td></tr>
-        <tr><td>Native RoPE suffix per layer/token</td><td class="num">128 B</td><td><code>64 × 2</code></td></tr>
-        <tr><td>Single-copy all-layer bytes/token</td><td class="num">7.872 KB</td><td><code>24 × (200 + 128)</code></td></tr>
-        <tr><td>Dual-layout all-layer bytes/token</td><td class="num">12.672 KB</td><td><code>24 × (400 + 128)</code></td></tr>
-      </tbody>
-    </table></div>
-<pre><code>single copy: 24 × [320 × 1152 B + (L − 320) × 328 B] ≤ budget
-dual layout: 24 × [320 × 1152 B + (L − 320) × 528 B] ≤ budget</code></pre>
-    <div class="table-wrap"><table class="data">
-      <thead><tr><th>Physical latent layout</th><th class="num">Zero-reserve ceiling</th><th class="num">Ceiling with 14.3 GB reserve</th><th>Condition</th></tr></thead>
-      <tbody>
-        <tr><td><strong>Single canonical copy</strong></td><td class="num">11.81M</td><td class="num"><strong>10.00M</strong></td><td>Runtime retiling for the opposite orientation</td></tr>
-        <tr><td>Two direct layouts</td><td class="num">7.34M</td><td class="num">6.21M</td><td>Double latent payload; direct QK and PV reads</td></tr>
-      </tbody>
-    </table></div>
-    <p>
-      Ordinary tensor parallelism does not multiply this context limit by eight: the shared MLA latent is commonly
-      replicated across TP ranks. A separate sequence/context-parallel KV sharding design could raise the aggregate
-      mathematical ceiling toward 94.5M, but would introduce a different communication and kernel problem. Loaded
-      weight memory, allocator fragmentation, workspaces, activations, retiling cost, and the model's native 1M
-      positional limit all make 11.81M an upper bound rather than a deployable configuration. If a practical kernel
-      cannot retile efficiently, the honest direct-layout target is approximately 6.2M with the same reserve.
-    </p>
-
-    <h4>5.4.2 Hardware baseline</h4>
+    <h4>5.3.1 Hardware baseline</h4>
     <p>
       First, consider the hardware of a single GPU. H100 and B200 can serve as bandwidth baselines, but they do not
       have SM107's <code>decompress::lut::b</code>; only Rubin can execute the K3V3 LUT-B path in this article
@@ -993,7 +947,7 @@ dual layout: 24 × [320 × 1152 B + (L − 320) × 528 B] ≤ budget</code></pre
       FLOPs per decoded token are <code>4 × Q_heads × head_dim × context × layers</code>.
     </p>
 
-    <h4>5.4.3 If all three GPUs read BF16 KV</h4>
+    <h4>5.3.2 If all three GPUs read BF16 KV</h4>
     <p>With BF16 KV, arithmetic intensity is only 4 FLOP/B, so all three GPUs are clearly HBM-bound.</p>
     <div class="table-wrap"><table class="data">
       <thead><tr><th>GPU</th><th class="num">8K BF16 roofline</th><th class="num">8K attention-only tok/s</th><th class="num">32K BF16 roofline</th><th class="num">32K attention-only tok/s</th></tr></thead>
@@ -1012,7 +966,7 @@ dual layout: 24 × [320 × 1152 B + (L − 320) × 528 B] ≤ budget</code></pre
       attention-only BF16 bandwidth ceilings are 21.7 tok/s on H100, 51.7 on B200, and 142.3 on Rubin.
     </p>
 
-    <h4>5.4.4 The K3V3 roofline: compressed bytes, then the B-only tile detail</h4>
+    <h4>5.3.3 The K3V3 roofline: compressed bytes, then the B-only tile detail</h4>
     <p>
       After adding the BF16 sink/recent window to K3V3, effective storage is 3.628 bit/value at 8K, 3.251 at 32K, and
       3.129 at 1M; the corresponding arithmetic intensities are 17.64 / 19.69 / 20.45 FLOP/B. At 1M this reduces the
@@ -1083,7 +1037,7 @@ dual layout: 24 × [320 × 1152 B + (L − 320) × 528 B] ≤ budget</code></pre
       cannot tell us which regime real hardware occupies.
     </p>
 
-    <h4>5.4.5 Scenario summary</h4>
+    <h4>5.3.4 Scenario summary</h4>
     <div class="table-wrap"><table class="data">
       <thead><tr><th class="num">Context</th><th class="num">Effective KV bits/value</th><th class="num">Byte-only HBM roofline</th><th class="num">Half-rate scenario</th><th class="num">Dense-rate scenario</th><th class="num">Scenario tok/s</th><th class="num">vs H100 BF16</th></tr></thead>
       <tbody>
@@ -1098,69 +1052,65 @@ dual layout: 24 × [320 × 1152 B + (L − 320) × 528 B] ≤ budget</code></pre
       4 / 128 row occupancy must not be transferred to MLA.
     </p>
 
-    <h2 id="limitations"><span class="idx">6</span>Limitations: What Requires Rubin Hardware?</h2>
-    <ol>
-      <li><strong>W3A8 quality is measured, but its packed Rubin kernel is not.</strong> H100/B200 execute fake QDQ
-        with restored tensors. The 3.375-bit payload and compiler legality are exact; achieved W3A8 latency is not.</li>
-      <li><strong>A3 has no native joint W3/KV3 path.</strong> Public PTX exposes LUT-B but no LUT-A. This report
-        intentionally provides no A3 speed curve.</li>
-      <li><strong>LUT-B throughput is unpublished.</strong> CUDA 13.4 proves that the instruction compiles, but does
-        not reveal full-tile latency or throughput. The 8.75 and 17.5 PFLOP/s rows are sensitivity cases.</li>
-      <li><strong>Useful rows are schedule-local.</strong> GQA uses the query heads sharing one local KV tile; MLA can
-        use all local heads sharing one latent. Kimi K3 has 96 global heads, so an unsharded MLA operation nominally
-        fills 75% of M=128 and avoids the severe GQA4 bottleneck. Tensor/context parallelism may reduce the number of
-        heads available to one GPU, so the realized MLA occupancy still depends on deployment.</li>
-      <li><strong>HBM and collector efficiency are unknown.</strong> Achieved bandwidth, LUT/codebook traffic,
-        <code>B_KEEP → B_REUSE</code>, descriptors, swizzles, and TMEM movement must be measured together.</li>
-      <li><strong>The fused kernel is not implemented on Rubin.</strong> Softmax, synchronization, page-table
-        traversal, launch overhead, and scheduling can move the bottleneck away from the isolated QK/PV roofline.</li>
-      <li><strong>Rotation overhead is not included in the speed estimate.</strong> The current fake-quant path applies
-        dense <code>R</code> and <code>Rᵀ</code> around quantization. A production implementation should fold fixed
-        transforms into Q/K/V or MLA up/down projections where possible, or fuse a structured rotation into the
-        one-time cache write. Any remaining rotation, clipping, and index-assignment work must be measured separately.</li>
-      <li><strong>QAT is a promising future direction.</strong> Quantization-aware training could jointly adapt the
-        model to the exact 3-bit indices, E4M3 LUT centroids, optional UE8M0 B scales, clipping, and absorbed
-        projections instead of correcting a frozen checkpoint after training. This report contains no QAT result.</li>
-      <li><strong>Hybrid models dilute layer-local gains.</strong> Kimi K3 has 24 Gated-MLA layers but 69 KDA layers
-        whose states remain native in this experiment; the MLA attention estimate is not an end-to-end model speedup.</li>
-      <li><strong>The shared MLA latent has an orientation problem.</strong> Single-copy 10M capacity assumes an
-        efficient runtime retile between K-like and V-like physical tiles. Two direct layouts reduce the same
-        capacity arithmetic to about 6.2M tokens.</li>
-      <li><strong>10M is an HBM capacity target, not a supported or measured context.</strong> The current Kimi K3
-        checkpoint exposes a 1M positional limit. PPL/KL were measured at 8K, and GPQA does not validate million-token
-        retrieval or generation quality.</li>
-    </ol>
-    <div class="callout">
-      <strong>The specific speedup cannot be known before hardware.</strong> We need at least the measured full-tile
-      <code>decompress::lut::b</code> throughput, per-architecture local row packing, achieved HBM bandwidth, and
-      collector reuse from a fused Rubin attention kernel. Every number above is an analytical ceiling, not Rubin
-      silicon data.
-    </div>
+    <h4 id="capacity">5.3.5 HBM context bound per concurrent request</h4>
+    <p>
+      For one TP8 Kimi-K3 replica, assume 288 GB/GPU, 195 GB/GPU of sharded weights, a 14.3 GB runtime reserve,
+      24 MLA layers, and equal-length requests. The per-request arithmetic is
+      <code>L ≤ capacity pool ÷ concurrent requests</code>. A canonical latent uses 328 B/token/layer after the
+      BF16 sink/recent window and requires runtime retiling; two direct layouts use 528 B/token/layer.
+    </p>
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th class="num">Concurrent requests / TP8 replica</th><th class="num">Single canonical layout</th><th class="num">Two direct layouts</th></tr></thead>
+      <tbody>
+        <tr><td class="num">1</td><td class="num">10.00M / request</td><td class="num">6.21M / request</td></tr>
+        <tr><td class="num">2</td><td class="num">5.00M / request</td><td class="num">3.11M / request</td></tr>
+        <tr><td class="num">4</td><td class="num">2.50M / request</td><td class="num">1.55M / request</td></tr>
+        <tr><td class="num">8</td><td class="num">1.25M / request</td><td class="num">0.78M / request</td></tr>
+        <tr><td class="num">16</td><td class="num">0.63M / request</td><td class="num">0.39M / request</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      This is only an HBM allocation bound. It does not extend the checkpoint's positional limit, validate
+      long-context quality, or include fragmentation, communication, page tables, and retiling work.
+    </p>
 
-    <h2 id="takeaways"><span class="idx">7</span>What Does This Story Tell Us So Far?</h2>
+    <h2 id="limitations"><span class="idx">6</span>Limitations</h2>
     <ol>
-      <li><strong>W3A8 is physically natural, but “3-bit” is not an accuracy method.</strong> Every strict row uses
-        3.375 bits/weight; H64+GPTQ remains stable while uniform and NF3 collapse, especially on Gemma and MiniMax.</li>
-      <li><strong>A8 is the compatible activation partner.</strong> Its measured KL remains small through 128K.
-        A3 would consume the only LUT-B slot and turn W3A3 into W8A3, so it is not modeled.</li>
-      <li><strong>Ordinary 3-bit KV cannot carry serving.</strong> Naive uniform INT3 simply collapses — 8K PPL goes
-        from 9.468 to 1504 and KL₅₀ to 5.15 — and no sink/recent window rescues it.</li>
-      <li><strong>OSCAR + Lloyd-Max brings the quality back.</strong> Offline per-layer codebooks with
-        rotation/clipping return Qwen3-4B to PPL ≈ 10.4 with the lowest KL₅₀, and lift Kimi K3's GPQA from 83.16% to
-        89.73% — all under the ISA-dictated Q/P contract (E4M3 + UE8M0 block32).</li>
-      <li><strong>One LUT-B primitive addresses two bandwidth problems.</strong> W3A8 is the natural static-weight
-        mapping; dynamic K3V3 is harder, but directly reduces the KV capacity and repeated-read traffic that dominate
-        long-context decode.</li>
-      <li><strong>The decode-shape issue is architecture-dependent.</strong> GQA4 exposes a severe 4 / 128 small-M
-        case. MLA shares one latent across all local query heads and therefore does not inherit that GQA-ratio
-        bottleneck, although sharding still controls its local occupancy.</li>
-      <li><strong>The 10M headline is the single-copy branch.</strong> It consumes 78.7 of the 93 GB free per GPU and
-        leaves 14.3 GB, but requires runtime retiling. Two direct latent layouts lower the result to 6.21M, before
-        considering the model's native 1M positional limit.</li>
-      <li><strong>Performance is not determined by bytes alone — and public information is insufficient.</strong>
-        At 1M, the Qwen GQA4 scenarios span 20.4×–33.6× H100 BF16. Only Rubin hardware can reveal the true tile
-        throughput and concrete speedup.</li>
+      <li><strong>Quality is measured with numerical simulation, not packed Rubin execution.</strong> H100/B200 restore
+        fake-quantized tensors before multiplication. The index/LUT/SFB formats are modeled explicitly, but the final
+        fused Weight and KV kernels have not run on Rubin.</li>
+      <li><strong>Full-tile LUT-B throughput is unknown.</strong> The 8.75/17.5-PFLOP/s cases bracket sensitivity to
+        this missing number; fused softmax, page traversal, row packing, collector reuse, and achieved HBM bandwidth
+        determine where a real kernel lands.</li>
+      <li><strong>Layout work remains architecture- and deployment-specific.</strong> H64/OSCAR transforms, dynamic
+        cache packing, MLA retiling, tensor/context sharding, and hybrid non-attention layers are outside the isolated
+        GEMM roofline and must be included in an end-to-end implementation.</li>
     </ol>
+
+    <h2 id="takeaways"><span class="idx">7</span>Conclusions: Accuracy and Performance</h2>
+    <h3>7.1 Accuracy</h3>
+    <ul>
+      <li><strong>A8 is stable; A3 is unsupported in the required operand position.</strong> Across 8K–128K, A8-only
+        KL₅₀ stays at or below 0.05375. Current LUT-B has no LUT-A, so W3A3/KV3A3 cannot use one MMA.</li>
+      <li><strong>W3 quality depends more on the algorithm than the nominal bit count.</strong> H64+GPTQ is the most
+        robust cross-model family; uniform and NF3 collapse. Native SFB, global scale, and K64 versus two-K32 change
+        quality, but no single schedule wins every model and context.</li>
+      <li><strong>KV3 needs a nonuniform codebook and, for the hardest cases, rotation.</strong> Uniform Qwen K3V3
+        reaches PPL 1504/KL₅₀ 5.15, while offline Lloyd-Max returns PPL to about 10.4. Latent OSCAR improves Kimi K3
+        from 1.601/0.00800 to 1.564/0.00679 and raises three-seed GPQA from 83.16% to 89.73%.</li>
+    </ul>
+    <h3>7.2 Performance</h3>
+    <ul>
+      <li><strong>Weight is the cleanest LUT-B deployment.</strong> Static <code>Wᵀ</code> can be fitted and packed
+        offline. With native SFB, the one-K64 3.25-bit payload gives weight-read bounds of 32.31× versus H100 BF16 and
+        13.54× versus B200 BF16 by the explicit bandwidth-and-byte formula; these are not model speedups.</li>
+      <li><strong>KV saves more bytes as context grows, but decode shape controls utilization.</strong> GQA4
+        single-token decode exposes 4/128 M-row occupancy, while MLA can reuse one latent across many local heads and
+        does not inherit the same underfill.</li>
+      <li><strong>The Qwen attention-only result is a sensitivity range, not a point forecast.</strong> At 1M, the
+        analyzed cases span 20.4×–33.6× H100 BF16. The request-capacity table is likewise HBM allocation arithmetic;
+        silicon measurements and a fused runtime are required for an end-to-end claim.</li>
+    </ul>
 
     <h2 id="repro">Reproducibility</h2>
     <p>Everything runs from the public OSCAR branch; all paths are relative to the repository root:</p>
@@ -1169,7 +1119,7 @@ git checkout zhongzhu/oscar-int3-rubin-simulate</code></pre>
     <ul>
       <li><strong>Weight W3A8 quality:</strong> <code>rubin/w3a8_lut_sim.py</code> and the manifests under
         <code>rotation/multimodel/</code> reproduce the 8K/64K/128K rows.</li>
-      <li><strong>KV speed tables (§5.4):</strong> <code>python3 rubin/rubin_k3v3_roofline.py --compare-hardware</code>
+      <li><strong>KV speed tables (§5.3):</strong> <code>python3 rubin/rubin_k3v3_roofline.py --compare-hardware</code>
         — Python standard library only.</li>
       <li><strong>ISA compile proof:</strong> <code>rubin/run_compile_probes.py
         --cuda /usr/local/cuda-13.4</code> — needs the CUDA 13.4 preview toolchain; verifies the emitted SASS
@@ -1281,6 +1231,9 @@ const W_METHODS = {
   nf3:     { label: "NF3", color: "#b55f5f", bits: 3.375, kernel: "Static zero-aware NF3 LUT; same storage, poor measured quality." },
   uniform: { label: "Uniform", color: "#a33d2f", bits: 3.375, kernel: "Uniform tile LUT; same storage, catastrophic measured quality." },
 };
+const W_SELECTOR_METHODS = [
+  "bf16", "a8", "h64_k64g", "h64_k32g", "rms_k64g", "rms_k32g", "gptq", "awq", "lm",
+];
 const W_DATA = {
   qwen: { label: "Qwen3-4B", values: {
     8192:   { bf16:[9.447,0], a8:[9.508,.00559], h64:[11.504,.24232], h64_k64g:[11.664,.24494], h64_k32g:[11.500,.27527], gptq:[13.057,.34194], rms:[12.890,.38058], rms_k64g:[13.215,.40095], rms_k32g:[12.640,.36268], awq:[13.813,.38270], lm:[13.580,.41725], scale:[14.148,.44276], squeeze:[14.551,.48394], nf3:[30.295,1.35188], uniform:[91.387,2.26996] },
@@ -1298,7 +1251,7 @@ const W_DATA = {
     131072: { bf16:[4.124,0], a8:[4.115,.01756], h64:[5.076,.20916], h64_k64g:[5.078,.23976], h64_k32g:[5.032,.21195], gptq:[5.327,.24296], awq:[5.404,.29059], rms:[6.474,.42795], rms_k64g:[5.014,.17007], rms_k32g:[4.986,.18677], squeeze:[6.513,.43720], lm:[7.488,.58320], scale:[7.835,.65367], uniform:[535932.314,12.15861], nf3:[2032820.392,13.30284] },
   }},
 };
-const wState = { model: "qwen", ctx: 131072, method: "h64", view: "focus" };
+const wState = { model: "qwen", ctx: 131072, method: "h64_k32g", view: "focus" };
 
 /* ============================================================
    Data — Qwen3-4B-Thinking-2507
@@ -1397,7 +1350,7 @@ function renderWeightChart() {
     ? allRows.filter(r => r.kl <= focusMax)
     : allRows;
   const width = Math.max(300, svg.parentElement.clientWidth - 36);
-  const H = 154, mL = 14, mR = 16, mT = 30, mB = 32;
+  const H = 166, mL = 14, mR = 16, mT = 42, mB = 32;
   const plotBot = H - mB, innerW = width - mL - mR;
   const hi = wState.view === "focus"
     ? focusMax
@@ -1438,9 +1391,13 @@ function renderWeightChart() {
     c.addEventListener("click", () => { wState.method=d.r.key; hideTip(); renderWeight(); });
     if (selected) {
       el("circle", { cx:d.x, cy:y, r:13, fill:"none", stroke:d.r.color, "stroke-width":1.6, "stroke-dasharray":"2.5 3" }, svg);
-      const tx = Math.min(Math.max(d.x, mL+44), width-mR-44);
-      const label = el("text", { x:tx, y:mT-10, "text-anchor":"middle", "font-size":11, "font-weight":700, fill:d.r.color }, svg);
-      label.textContent = d.r.label+" "+(d.r.kl < .1 ? d.r.kl.toFixed(4) : d.r.kl.toFixed(3));
+      const labelText = d.r.label+" "+(d.r.kl < .1 ? d.r.kl.toFixed(4) : d.r.kl.toFixed(3));
+      const labelW = Math.min(width-mL-mR, Math.max(88, labelText.length*6.3+16));
+      const tx = Math.min(Math.max(d.x, mL+labelW/2), width-mR-labelW/2);
+      el("line", { x1:tx, y1:25, x2:d.x, y2:y-13, stroke:d.r.color, "stroke-width":1, "stroke-dasharray":"2 3", opacity:.65 }, svg);
+      el("rect", { x:tx-labelW/2, y:4, width:labelW, height:22, rx:6, fill:"#fcfaf4", stroke:d.r.color, "stroke-width":1 }, svg);
+      const label = el("text", { x:tx, y:19, "text-anchor":"middle", "font-size":11, "font-weight":700, fill:d.r.color }, svg);
+      label.textContent = labelText;
     }
   });
 }
@@ -1479,7 +1436,7 @@ function renderWeight() {
   seg("wSegCtx", [[8192,"8K"],[65536,"64K"],[131072,"128K"]], wState.ctx, k => {
     wState.ctx=+k; renderWeight();
   });
-  seg("wSegMethod", weightRows().map(r => [r.key,r.label]), wState.method, k => {
+  seg("wSegMethod", weightRows().filter(r => W_SELECTOR_METHODS.includes(r.key)).map(r => [r.key,r.label]), wState.method, k => {
     wState.method=k;
     if (values[k][1] > 1) wState.view="all";
     renderWeight();
@@ -1647,21 +1604,25 @@ function renderSpeed() {
   const sp = speedAt(hx.ctx);
   const ctxL = CTX_LABEL[hx.ctx];
   if (!M.speed) {
-    $("hxTokK").textContent = "TP8 MLA mathematical context capacity";
+    $("hxTokK").textContent = "TP8 HBM context bound per request";
     const host0 = $("hxBars");
     host0.innerHTML = "";
     const selected = hx.layout === "single" ? 10.00 : 6.21;
-    $("hxTok").textContent = selected.toFixed(2) + "M";
+    $("hxTok").textContent = selected.toFixed(2) + "M @ R=1";
     $("hxTok").style.color = hx.layout === "single" ? "#8a6a14" : "#6e6a5c";
     $("hxTokSub").textContent = hx.layout === "single"
       ? "single canonical c_KV copy \u00b7 runtime retiling required"
       : "two direct QK/PV layouts \u00b7 400 B latent/token/layer";
-    barRow(host0, "Single copy + retile", 10.00, 10.00, "#8a6a14", { valText: "10.00M" });
-    barRow(host0, "Two direct layouts", 6.21, 10.00, "#6e6a5c", { valText: "6.21M" });
+    [1,2,4,8].forEach(r => {
+      const perRequest = selected / r;
+      barRow(host0, r+" request"+(r>1?"s":""), perRequest, selected,
+        hx.layout === "single" ? "#8a6a14" : "#6e6a5c",
+        { valText: perRequest.toFixed(2)+"M / request" });
+    });
     const hint = document.createElement("div");
     hint.className = "chart-hint";
     hint.style.textAlign = "left";
-    hint.textContent = "14.3 GB runtime reserve/GPU. Current checkpoint positional limit remains 1M.";
+    hint.textContent = "Equal-length requests; HBM arithmetic only. The checkpoint positional limit remains 1M.";
     host0.appendChild(hint);
     return;
   }
