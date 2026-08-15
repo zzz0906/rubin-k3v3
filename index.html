@@ -315,7 +315,7 @@
       </div>
       <div class="panel">
         <div class="panel-head">
-          <div class="stat-k">Byte-only upper bound · not a kernel estimate</div>
+          <div class="stat-k">Engineering weight-only estimate · not measured</div>
           <div class="stat-v" id="wxBits">–</div>
           <div class="stat-s" id="wxRatio">–</div>
         </div>
@@ -399,8 +399,8 @@
       models. <b>Speed.</b> Analytical attention-only roofline
       for Qwen3-4B decode (36 layers · 32 Q / 8 KV heads · head dim 128). K3V3 stores 3.125 bits/value plus the BF16
       window (≈3.63 b/val @ 8K and 3.13 @ 1M). MXFP8 fixes the M tile at 128 while GQA4 single-token decode fills only 4 rows, but
-      NVIDIA has not published the full-tile throughput of the LUT-B mode. The speed panel therefore shows explicit
-      10%, 25%, 50%, and dense-rate sensitivity endpoints, not an expected range or Rubin prediction.
+      NVIDIA has not published the full-tile throughput of the LUT-B mode. The speed panel therefore shows a
+      data-path engineering guess of 40–70% of dense FP8, centered at 55%; it is analysis, not measured Rubin data.
       Excludes weights, MLP, sampling and scheduling. The GQA/MLA model, Qwen estimate, and request-capacity arithmetic
       are all in <a href="#throughput">§5.3</a>; limitations are in <a href="#limitations">§6</a>. Kimi HBM arithmetic
       uses TP8, 195 GB weights/GPU, a 14.3 GB runtime reserve, and either one canonical latent requiring retiling or
@@ -418,8 +418,8 @@
       <ol>
         <li><strong>Weight is the natural LUT-B target, but scale contracts matter.</strong> CUDA 13.4 defines a
           3.125-bit K64 LUT payload and a native 3.25-bit K64 SFB path. The measured 3.375-bit two-K32 rows are
-          non-native quality oracles. Even the 32.33× weight-byte ceiling requires LUT-B to sustain about 79% of
-          dense FP8 throughput, which is not publicly established.</li>
+          non-native quality oracles. My data-path estimate for native K64 is 40–70% of dense FP8, centered at 55%;
+          the 32.33× H100 byte ceiling requires about 79%.</li>
         <li><strong>A3 is unsupported as matrix A in the current LUT-B MMA.</strong> Public PTX exposes lookup
           decompression only for B. W3 already occupies that operand, so W3A3 cannot be encoded; the supported pairing
           studied here is E4M3 A with UE8M0 K32 scales and a 3-bit LUT-B operand.</li>
@@ -628,20 +628,20 @@ two K32    = 216 B = 3.375 bit/W, algorithm oracle only (not native LUT-B)</code
       </tbody>
     </table></div>
     <div class="table-wrap"><table class="data">
-      <caption>Useful weight-only sensitivity bound; not measured or expected throughput</caption>
-      <thead><tr><th class="num">LUT-B / dense FP8 assumption</th><th class="num">vs Rubin BF16</th><th class="num">vs H100 BF16</th><th class="num">vs B200 BF16</th></tr></thead>
+      <caption>Data-path engineering guess; not measured throughput</caption>
+      <thead><tr><th class="num">Full-tile LUT-B judgment</th><th class="num">vs Rubin BF16</th><th class="num">vs H100 BF16</th><th class="num">vs B200 BF16</th></tr></thead>
       <tbody>
-        <tr><td class="num">10%</td><td class="num">0.62×</td><td class="num">4.08×</td><td class="num">1.71×</td></tr>
-        <tr><td class="num">25%</td><td class="num">1.55×</td><td class="num">10.20×</td><td class="num">4.27×</td></tr>
-        <tr><td class="num">50%</td><td class="num">3.11×</td><td class="num">20.41×</td><td class="num">8.54×</td></tr>
-        <tr><td class="num">≥79.2%</td><td class="num">up to 4.92×</td><td class="num">up to 32.33×</td><td class="num">up to 13.54×</td></tr>
+        <tr><td class="num">40% lower guess</td><td class="num">2.49×</td><td class="num">16.32×</td><td class="num">6.84×</td></tr>
+        <tr><td class="num">55% center guess</td><td class="num">3.42×</td><td class="num">22.45×</td><td class="num">9.40×</td></tr>
+        <tr><td class="num">70% upper guess</td><td class="num">4.35×</td><td class="num">28.57×</td><td class="num">11.96×</td></tr>
       </tbody>
     </table></div>
     <p>
       The 32.33× number is only the far-right byte ceiling. Reaching it requires LUT-B to sustain 13.86 PFLOP/s,
-      about 79.2% of Rubin's published dense FP8 peak, before counting A/output traffic, H64, epilogues, routing, or
-      scheduling. NVIDIA publishes no LUT-B rate, so this revision presents sensitivity rows rather than an expected
-      kernel range. Two-K32 quality-oracle rows receive no speed estimate.
+      about 79.2% of Rubin's published dense FP8 peak. My 40–70% engineering band is lower because LUT reconstruction
+      is integrated (better than software dequant), but the path still selects 24 useful index bytes from a 48-byte
+      descriptor fetch and adds TMEM-LUT plus collector dependencies (worse than ordinary dense FP8). Two-K32
+      quality-oracle rows receive no speed estimate.
     </p>
 
     <h2 id="activation"><span class="idx">4</span>Activation Quantization: Keep A8; A3 Is Unsupported</h2>
@@ -1051,19 +1051,20 @@ attention throughput = min(B_HBM × arithmetic intensity,
       only an optimistic useful-row upper bound.
     </p>
 
-    <h4>5.3.4 Scenario summary</h4>
+    <h4>5.3.4 Data-path engineering guess</h4>
     <div class="table-wrap"><table class="data">
-      <thead><tr><th class="num">Context</th><th class="num">Critical LUT-B rate</th><th class="num">10% tok/s</th><th class="num">25% tok/s</th><th class="num">50% tok/s</th><th class="num">Dense endpoint tok/s</th></tr></thead>
+      <thead><tr><th class="num">Context</th><th class="num">Critical LUT-B rate</th><th class="num">40% lower guess</th><th class="num">55% center guess</th><th class="num">70% upper guess</th></tr></thead>
       <tbody>
-        <tr><td class="num">8K</td><td class="num">12.42P (71.0%)</td><td class="num">11.32K</td><td class="num">28.30K</td><td class="num">56.59K</td><td class="num">80.32K</td></tr>
-        <tr><td class="num">32K</td><td class="num">13.86P (79.2%)</td><td class="num">2.83K</td><td class="num">7.07K</td><td class="num">14.15K</td><td class="num">22.41K</td></tr>
-        <tr><td class="num">1M</td><td class="num">14.40P (82.3%)</td><td class="num">88</td><td class="num">221</td><td class="num">442</td><td class="num">728</td></tr>
+        <tr><td class="num">8K</td><td class="num">12.42P (71.0%)</td><td class="num">45.27K</td><td class="num">62.25K</td><td class="num">79.23K</td></tr>
+        <tr><td class="num">32K</td><td class="num">13.86P (79.2%)</td><td class="num">11.32K</td><td class="num">15.56K</td><td class="num">19.81K</td></tr>
+        <tr><td class="num">1M</td><td class="num">14.40P (82.3%)</td><td class="num">354</td><td class="num">486</td><td class="num">619</td></tr>
       </tbody>
     </table></div>
     <p>
-      These columns are independent sensitivity endpoints, <strong>not a prediction interval or expected
-      efficiency range</strong>. The table is specific to Qwen3-4B GQA4 single-token attention and its optimistic
-      4/128 row-packing assumption; it must not be transferred to MLA or end-to-end output throughput.
+      The center judgment is 55% of dense FP8 full-tile throughput: integrated lookup should outperform software
+      dequantization, while the 48B-to-24B fetch, TMEM LUT staging, and collector dependencies should keep it below
+      dense parity. The table is specific to Qwen GQA4 and still excludes page walking, softmax, barriers, and output
+      traffic, so an implemented fused kernel should land below it.
     </p>
 
     <h4 id="capacity">5.3.5 HBM context bound per concurrent request</h4>
@@ -1115,15 +1116,15 @@ attention throughput = min(B_HBM × arithmetic intensity,
     </ul>
     <h3>7.2 Performance</h3>
     <ul>
-      <li><strong>Weight is the cleanest mapping, but the old headline was only a byte ceiling.</strong> The native
-        3.25-bit K64 path reaches 32.33× versus H100 BF16 only if LUT-B sustains about 13.86P, or 79.2% of Rubin dense
-        FP8, before all non-weight overhead. At 25%/50% sensitivity, the bounds are 10.20×/20.41× instead.</li>
+      <li><strong>Weight is the cleanest mapping, but the old headline was only a byte ceiling.</strong> My
+        data-path guess puts the native K64 path at 16.32–28.57× H100 BF16 weight-only, centered at 22.45×; the
+        32.33× ceiling still requires 79.2% of dense FP8 before non-weight overhead.</li>
       <li><strong>KV saves more bytes as context grows, but decode shape controls utilization.</strong> GQA4
         single-token decode exposes 4/128 M-row occupancy, while MLA can reuse one latent across many local heads and
         does not inherit the same underfill.</li>
-      <li><strong>Qwen attention is now a sensitivity table, not a range.</strong> At 1M, 10/25/50/100%-of-dense
-        endpoints give 88/221/442/728 attention tok/s. The last value needs LUT-B above 82% of dense FP8 to hit the
-        byte ceiling; silicon measurements and a fused runtime are required for any end-to-end claim.</li>
+      <li><strong>The Qwen GQA4 engineering guess is below the byte ceiling.</strong> At 1M, the 40–70% data-path band
+        gives 354–619 attention tok/s, centered at 486; page traversal, Q/P conversion, softmax, and output movement
+        lower a real fused kernel further.</li>
     </ul>
 
     <h2 id="repro">Reproducibility</h2>
@@ -1321,9 +1322,9 @@ function speedAt(ctx) {
     Math.min(byte, RUBIN_DENSE_FP8 * fraction * TILE_UTIL / fl);
   return {
     fl, bB, bK, h100, rubinBF16, byte,
-    p10: sensitivity(.10),
-    p25: sensitivity(.25),
-    p50: sensitivity(.50),
+    p40: sensitivity(.40),
+    p55: sensitivity(.55),
+    p70: sensitivity(.70),
     denseEndpoint: sensitivity(1.0),
   };
 }
@@ -1487,19 +1488,25 @@ function renderWeight() {
   $("wxKl").style.color = row.color;
   $("wxPpl").textContent = "PPL "+row.ppl.toFixed(3)+" · "+model.label+" @ "+(wState.ctx/1024)+"K";
   const h100Ceiling = 22 / 3.35 * 16 / row.bits;
-  const b200Ceiling = 22 / 8 * 16 / row.bits;
-  const criticalDenseFraction = 22e12 * 16 * 128 /
-    (row.bits * 17.5e15);
+  const guessedH100 = fraction => Math.min(
+    h100Ceiling,
+    17.5e15 * fraction / 128 / 3.35e12
+  );
   $("wxBits").textContent = row.nativeLutb === false
     ? "N/A"
-    : "\u2264"+h100Ceiling.toFixed(1)+"×";
+    : (
+      row.bits < 16
+        ? "\u2248"+guessedH100(.55).toFixed(1)+"×"
+        : "\u2014"
+    );
   $("wxBits").style.color = row.color;
   $("wxRatio").textContent = row.nativeLutb === false
     ? "quality oracle only · no native PTX 9.4 LUT-B schedule"
     : (
       row.bits < 16
-        ? "requires \u2265"+(100*criticalDenseFraction).toFixed(0)+"% of dense FP8 LUT-B \u00b7 \u2264"+
-          b200Ceiling.toFixed(1)+"× vs B200"
+        ? "40\u201370% guess: "+guessedH100(.40).toFixed(1)+"\u2013"+
+          guessedH100(.70).toFixed(1)+"× H100 \u00b7 byte cap \u2264"+
+          h100Ceiling.toFixed(1)+"×"
         : "raw-bandwidth normalization only"
     );
   const host = $("wxBars"); host.innerHTML="";
@@ -1523,7 +1530,7 @@ function renderWeight() {
     '<div class="method-line faint">'+(
       row.nativeLutb === false
         ? "This row has no Rubin kernel speed estimate."
-        : "The speedup above is a byte-only ceiling. Reaching it requires unpublished LUT-B throughput near the dense-FP8 rate."
+        : "The estimate uses a 40\u201370% full-tile engineering guess centered at 55%; the larger byte-only ceiling still requires LUT-B near the dense-FP8 rate."
     )+'</div>';
   renderWeightChart();
 }
@@ -1695,10 +1702,10 @@ function renderSpeed() {
 
   if (p.kind === "k3v3") {
     $("hxTok").textContent =
-      fmtTok(sp.p10)+" / "+fmtTok(sp.p25)+" / "+fmtTok(sp.p50);
+      fmtTok(sp.p40)+" / "+fmtTok(sp.p55)+" / "+fmtTok(sp.p70);
     $("hxTok").style.color = "#8a6a14";
     $("hxTokSub").textContent =
-      "10% / 25% / 50% of dense FP8 sensitivity \u00b7 not an expected range";
+      "40% lower / 55% center / 70% upper engineering guess";
   } else if (p.kind === "bf16") {
     $("hxTok").textContent = fmtTok(sp.rubinBF16);
     $("hxTok").style.color = "#4a463c";
@@ -1715,12 +1722,12 @@ function renderSpeed() {
   barRow(host, "H100 \u00b7 BF16 KV", sp.h100, max, "#b3ac94", { valText: fmtTok(sp.h100) + " \u00b7 1.00\u00d7" });
   barRow(host, "Rubin \u00b7 BF16 KV", sp.rubinBF16, max, "#6e6a5c", { valText: fmtTok(sp.rubinBF16) + " \u00b7 " + fmtX(sp.rubinBF16 / sp.h100) });
   if (p.kind === "k3v3") {
-    barRow(host, "K3V3 \u00b7 LUT-B @ 10%", sp.p10, max, "#b3ac94",
-      { valText: fmtTok(sp.p10) + " \u00b7 " + fmtX(sp.p10 / sp.h100) });
-    barRow(host, "K3V3 \u00b7 LUT-B @ 25%", sp.p25, max, "#8f8978",
-      { valText: fmtTok(sp.p25) + " \u00b7 " + fmtX(sp.p25 / sp.h100) });
-    barRow(host, "K3V3 \u00b7 LUT-B @ 50%", sp.p50, max, "#a97f19",
-      { valText: fmtTok(sp.p50) + " \u00b7 " + fmtX(sp.p50 / sp.h100) });
+    barRow(host, "K3V3 \u00b7 lower guess 40%", sp.p40, max, "#b3ac94",
+      { valText: fmtTok(sp.p40) + " \u00b7 " + fmtX(sp.p40 / sp.h100) });
+    barRow(host, "K3V3 \u00b7 center guess 55%", sp.p55, max, "#8f8978",
+      { valText: fmtTok(sp.p55) + " \u00b7 " + fmtX(sp.p55 / sp.h100) });
+    barRow(host, "K3V3 \u00b7 upper guess 70%", sp.p70, max, "#a97f19",
+      { valText: fmtTok(sp.p70) + " \u00b7 " + fmtX(sp.p70 / sp.h100) });
     barRow(host, "K3V3 \u00b7 dense endpoint", sp.denseEndpoint, max,
       p.key === "uniform" ? "#a33d2f" : "#8a6a14",
       { valText: fmtTok(sp.denseEndpoint) + " \u00b7 " + fmtX(sp.denseEndpoint / sp.h100) });
@@ -1750,10 +1757,10 @@ function renderCaption() {
   const ctxL = CTX_LABEL[hx.ctx];
   let html;
   if (p.kind === "k3v3") {
-    html = p.desc + " At " + ctxL + ", explicit 10% / 25% / 50%-of-dense LUT-B sensitivity endpoints give <b>" +
-      fmtTok(sp.p10)+" / "+fmtTok(sp.p25)+" / "+fmtTok(sp.p50) +
-      "</b> attention tok/s. The dense-rate endpoint is <b>"+fmtTok(sp.denseEndpoint)+
-      "</b>. None is an expected efficiency or prediction; LUT-B throughput is unpublished.";
+    html = p.desc + " At " + ctxL + ", the 40% / 55% / 70% data-path engineering guesses give <b>" +
+      fmtTok(sp.p40)+" / "+fmtTok(sp.p55)+" / "+fmtTok(sp.p70) +
+      "</b> attention tok/s. The center guess reflects integrated lookup but discounts dense-FP8 parity for the " +
+      "48B-to-24B descriptor fetch, TMEM LUT staging, and collector dependencies. This remains unmeasured.";
     if (p.key === "uniform") {
       html += " <b>Same storage and the same modeled speed scenarios \u2014 but KL\u2085\u2080 explodes to " +
         p.kl.toFixed(2) + " nats/token (PPL \u00d7" + (p.ppl / BF16_PPL).toFixed(0) +
