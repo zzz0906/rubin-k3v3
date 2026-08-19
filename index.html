@@ -608,7 +608,7 @@ effective         = 3.125 bit/value</code></pre>
       The last two rows are promoted from our iteration-sweep study. <strong>H64 + inter-LM-GPTQ (round 1)</strong>
       alternates one offline Hessian-weighted Lloyd codebook M-step with a GPTQ re-pass; its runtime contract is
       identical to the native H64 row, yet it improves every Qwen context and now holds the best native Qwen 128K
-      KL₅₀ (0.25061) and the best Gemma PPL column. The sweep also calibrated the error bars: the random-H64 sign
+      KL₅₀ (0.25061) and the best Gemma PPL column. The sweep also calibrated the error bars: the H64 sign
       seed alone moves KL₅₀ by σ ≈ 0.009 (unweighted codebook) to 0.028 (RMS²-weighted), and under per-seed pairing
       only calibration size (512→4096 tokens, −0.022 KL₅₀) and one alternation round (−0.009) survive as real
       effects — RMS²-vs-unweighted codebook weighting does not, which is why the weighted two-K32 row shuffles
@@ -617,10 +617,39 @@ effective         = 3.125 bit/value</code></pre>
       than round 0 on every context (128K KL₅₀ 0.23976 at round 0 versus 0.252–0.275 across rounds) — exactly what
       the Hessian-starvation analysis predicts for per-expert Hessians estimated from ~1/32 of calibration tokens,
       so alternation stays off for routed experts. On Qwen/Gemma, rounds 1–4 shuffle within the seed noise band (per-round table in the PLAN);
-      the per-context best rounds reach Qwen 64K 10.564 / 0.23425 (round 3). A same-bitrate compact <strong>AQLM</strong> reproduction (additive VQ, M=3, 2⁸ codes, g=8, no SGD
+      the per-context best rounds reach Qwen 64K 10.564 / 0.23425 (round 3). A same-bitrate compact <strong>AQLM</strong><span class="cite"><a href="#ref-aqlm">[10]</a></span> reproduction (additive VQ, M=3, 2⁸ codes, g=8, no SGD
       fine-tune) improves monotonically over its alternating rounds but saturates at 16.096 PPL / 0.470 KL₅₀ on the
       8K protocol — about 2× behind the GPTQ-corrected scalar LUT — so additive VQ without its fine-tuning stage is
       not competitive under this hardware contract.
+    </p>
+    <div class="callout">
+      <strong>The alternation, introduced.</strong> inter-LM-GPTQ is our offline quantizer–corrector loop that joins the
+      two classical pieces this study already uses. GPTQ<span class="cite"><a href="#ref-gptq">[4]</a></span> is a
+      <em>corrector</em>: with the codebook held fixed, it quantizes weight columns one at a time and propagates each
+      column's rounding error into the not-yet-quantized columns using the calibration Hessian. Lloyd–Max
+      <span class="cite"><a href="#ref-max">[1]</a><a href="#ref-lloyd">[2]</a></span> is a <em>quantizer designer</em>: given the
+      weights, its M-step refits the 8-entry E4M3 codebook (optionally weighted by per-column activation RMS², a diagonal-Hessian
+      importance). Neither sees the other's output, so we alternate them: round 0 fits a codebook and runs one GPTQ pass; each further
+      round refits the codebook on the error-compensated weights that GPTQ actually produced, then re-runs GPTQ under the new
+      codebook. Everything happens offline — every round emits the same 3-bit indices, E4M3 LUT, UE8M0 SFB factors, and folded
+      global scale, so the Rubin runtime contract is byte-identical across rounds. What the sweep shows: the loop does converge —
+      the Hessian-weighted reconstruction objective falls monotonically (−22.7% for the plain variant) and plateaus at a fixed
+      point — but raw per-layer MSE barely moves and individual layers trade in both directions, so the end metric KL₅₀ is not
+      monotone in rounds: layer-local reconstruction and end-to-end KL are different objectives, and each GPTQ re-pass re-injects
+      Hessian estimation noise. In practice the alternation is a cheap held-out
+      selection knob: on dense models one round is a small but seed-consistent gain (−0.009 KL₅₀ paired mean at 4096 calibration
+      tokens), on Hessian-starved MoE routed experts every round hurts and it should stay off.
+    </div>
+    <p>
+      <strong>Production KL cross-check.</strong> All MiniMax rows were additionally scored with the production truncated-KL
+      metric from <a href="https://github.com/togethercomputer/kl-probe">kl-probe</a><span class="cite"><a href="#ref-klprobe">[11]</a></span>,
+      measured through the actual SGLang serving stack in a dedicated rerun batch: KL(ref‖cand) renormalized over the teacher's
+      top-50 support, with the uncovered teacher tail reported separately rather than entering the sum. The two metrics agree on
+      every ranking that matters here — e.g. the best native MiniMax row (RMS² + K64 SFB + global) reads 0.170 KL₅₀ / 0.181 prod-KL
+      at 128K, and BF16+A8 reproduces to the last digit — with one instructive exception: collapsed baselines like NF3/uniform read
+      ≈5.2 prod-KL versus ≈13.4 KL₅₀, because renormalizing over the teacher support hides the candidate's off-support mass collapse
+      that KL₅₀'s explicit tail bucket captures. prod-KL therefore has to be read next to PPL for collapsed models; full per-context
+      columns are in the PLAN tables.
     </p>
 
     <h3>3.2 Kernel organization</h3>
@@ -1184,6 +1213,8 @@ git checkout zhongzhu/oscar-int3-rubin-simulate</code></pre>
       <li id="ref-quarot">S. Ashkboos et al., <a href="https://arxiv.org/abs/2404.00456">“QuaRot: Outlier-Free 4-Bit Inference in Rotated LLMs,”</a> NeurIPS 2024.</li>
       <li id="ref-qlora">T. Dettmers et al., <a href="https://arxiv.org/abs/2305.14314">“QLoRA: Efficient Finetuning of Quantized LLMs,”</a> NeurIPS 2023.</li>
       <li id="ref-quant">R. M. Gray and D. L. Neuhoff, <a href="https://doi.org/10.1109/18.720541">“Quantization,”</a> <i>IEEE Transactions on Information Theory</i>, 1998.</li>
+      <li id="ref-aqlm">V. Egiazarian et al., <a href="https://arxiv.org/abs/2401.06118">“Extreme Compression of Large Language Models via Additive Quantization,”</a> ICML 2024.</li>
+      <li id="ref-klprobe">Together Computer, <a href="https://github.com/togethercomputer/kl-probe">“kl-probe: truncated-KL probing for served models,”</a> GitHub, 2026.</li>
       <li><a href="https://developer.nvidia.com/blog/inside-nvidia-rubin-gpu-architecture-powering-the-era-of-agentic-ai/">NVIDIA: Inside NVIDIA Rubin GPU Architecture</a></li>
       <li><a href="https://developer.nvidia.com/blog/inside-the-nvidia-rubin-platform-six-new-chips-one-ai-supercomputer/">NVIDIA: Inside the Vera Rubin Platform</a></li>
       <li><a href="https://www.nvidia.com/en-us/data-center/vera-rubin-nvl72/">NVIDIA: Vera Rubin NVL72 specs</a></li>
