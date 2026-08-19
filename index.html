@@ -605,10 +605,44 @@ effective         = 3.125 bit/value</code></pre>
       matching runtime transform on A.
     </p>
     <p>
-      The last two rows are promoted from our iteration-sweep study. <strong>H64 + inter-LM-GPTQ (round 1)</strong>
-      alternates one offline Hessian-weighted Lloyd codebook M-step with a GPTQ re-pass; its runtime contract is
-      identical to the native H64 row, yet it improves every Qwen context and now holds the best native Qwen 128K
-      KL₅₀ (0.25061) and the best Gemma PPL column. The sweep also calibrated the error bars: the H64 sign
+      <strong>Production KL cross-check.</strong> All MiniMax rows were additionally scored with the production truncated-KL
+      metric from <a href="https://github.com/togethercomputer/kl-probe">kl-probe</a><span class="cite"><a href="#ref-klprobe">[11]</a></span>,
+      measured through the actual SGLang serving stack in a dedicated rerun batch: KL(ref‖cand) renormalized over the teacher's
+      top-50 support, with the uncovered teacher tail reported separately rather than entering the sum. The two metrics agree on
+      every ranking that matters here — e.g. the best native MiniMax row (RMS² + K64 SFB + global) reads 0.170 KL₅₀ / 0.181 prod-KL
+      at 128K, and BF16+A8 reproduces to the last digit — with one instructive exception: collapsed baselines like NF3/uniform read
+      ≈5.2 prod-KL versus ≈13.4 KL₅₀, because renormalizing over the teacher support hides the candidate's off-support mass collapse
+      that KL₅₀'s explicit tail bucket captures. prod-KL therefore has to be read next to PPL for collapsed models; full per-context
+      columns are in the PLAN tables.
+    </p>
+
+    <h3>3.2 The iteration method: inter-LM-GPTQ</h3>
+    <div class="callout">
+      <strong>The loop.</strong> inter-LM-GPTQ is our offline quantizer–corrector loop that joins the
+      two classical pieces this study already uses. GPTQ<span class="cite"><a href="#ref-gptq">[4]</a></span> is a
+      <em>corrector</em>: with the codebook held fixed, it quantizes weight columns one at a time and propagates each
+      column's rounding error into the not-yet-quantized columns using the calibration Hessian. Lloyd–Max
+      <span class="cite"><a href="#ref-max">[1]</a><a href="#ref-lloyd">[2]</a></span> is a <em>quantizer designer</em>: given the
+      weights, its M-step refits the 8-entry E4M3 codebook (optionally weighted by per-column activation RMS², a diagonal-Hessian
+      importance). Neither sees the other's output, so we alternate them: round 0 fits a codebook and runs one GPTQ pass; each further
+      round refits the codebook on the error-compensated weights that GPTQ actually produced, then re-runs GPTQ under the new
+      codebook. Everything happens offline — every round emits the same 3-bit indices, E4M3 LUT, UE8M0 SFB factors, and folded
+      global scale, so the Rubin runtime contract is byte-identical across rounds.
+    </div>
+    <p>
+      <strong>Does it converge, and does convergence help?</strong> The loop does converge: the Hessian-weighted reconstruction
+      objective falls monotonically (−22.7% for the plain variant) and plateaus at a fixed point. But raw per-layer MSE barely
+      moves and individual layers trade in both directions, so the end metric KL₅₀ is not monotone in rounds — layer-local
+      reconstruction and end-to-end KL are different objectives, and each GPTQ re-pass re-injects Hessian estimation noise.
+      In practice the alternation is a cheap held-out selection knob: on dense models one round is a small but seed-consistent
+      gain (−0.009 KL₅₀ paired mean at 4096 calibration tokens), on Hessian-starved MoE routed experts every round hurts and
+      it should stay off.
+    </p>
+    <p>
+      Three rows in the §3.1 table are promoted from this sweep: the round-1 alternation row and the two GPTQ + H64 +
+      RMS²-weighted rows. <strong>H64 + inter-LM-GPTQ (round 1)</strong>
+      keeps a runtime contract identical to the native H64 row, yet it improves every Qwen context and now holds the best
+      native Qwen 128K KL₅₀ (0.25061) and the best Gemma PPL column. The sweep also calibrated the error bars: the H64 sign
       seed alone moves KL₅₀ by σ ≈ 0.009 (unweighted codebook) to 0.028 (RMS²-weighted), and under per-seed pairing
       only calibration size (512→4096 tokens, −0.022 KL₅₀) and one alternation round (−0.009) survive as real
       effects — RMS²-vs-unweighted codebook weighting does not, which is why the weighted two-K32 row shuffles
@@ -622,37 +656,8 @@ effective         = 3.125 bit/value</code></pre>
       8K protocol — about 2× behind the GPTQ-corrected scalar LUT — so additive VQ without its fine-tuning stage is
       not competitive under this hardware contract.
     </p>
-    <div class="callout">
-      <strong>The alternation, introduced.</strong> inter-LM-GPTQ is our offline quantizer–corrector loop that joins the
-      two classical pieces this study already uses. GPTQ<span class="cite"><a href="#ref-gptq">[4]</a></span> is a
-      <em>corrector</em>: with the codebook held fixed, it quantizes weight columns one at a time and propagates each
-      column's rounding error into the not-yet-quantized columns using the calibration Hessian. Lloyd–Max
-      <span class="cite"><a href="#ref-max">[1]</a><a href="#ref-lloyd">[2]</a></span> is a <em>quantizer designer</em>: given the
-      weights, its M-step refits the 8-entry E4M3 codebook (optionally weighted by per-column activation RMS², a diagonal-Hessian
-      importance). Neither sees the other's output, so we alternate them: round 0 fits a codebook and runs one GPTQ pass; each further
-      round refits the codebook on the error-compensated weights that GPTQ actually produced, then re-runs GPTQ under the new
-      codebook. Everything happens offline — every round emits the same 3-bit indices, E4M3 LUT, UE8M0 SFB factors, and folded
-      global scale, so the Rubin runtime contract is byte-identical across rounds. What the sweep shows: the loop does converge —
-      the Hessian-weighted reconstruction objective falls monotonically (−22.7% for the plain variant) and plateaus at a fixed
-      point — but raw per-layer MSE barely moves and individual layers trade in both directions, so the end metric KL₅₀ is not
-      monotone in rounds: layer-local reconstruction and end-to-end KL are different objectives, and each GPTQ re-pass re-injects
-      Hessian estimation noise. In practice the alternation is a cheap held-out
-      selection knob: on dense models one round is a small but seed-consistent gain (−0.009 KL₅₀ paired mean at 4096 calibration
-      tokens), on Hessian-starved MoE routed experts every round hurts and it should stay off.
-    </div>
-    <p>
-      <strong>Production KL cross-check.</strong> All MiniMax rows were additionally scored with the production truncated-KL
-      metric from <a href="https://github.com/togethercomputer/kl-probe">kl-probe</a><span class="cite"><a href="#ref-klprobe">[11]</a></span>,
-      measured through the actual SGLang serving stack in a dedicated rerun batch: KL(ref‖cand) renormalized over the teacher's
-      top-50 support, with the uncovered teacher tail reported separately rather than entering the sum. The two metrics agree on
-      every ranking that matters here — e.g. the best native MiniMax row (RMS² + K64 SFB + global) reads 0.170 KL₅₀ / 0.181 prod-KL
-      at 128K, and BF16+A8 reproduces to the last digit — with one instructive exception: collapsed baselines like NF3/uniform read
-      ≈5.2 prod-KL versus ≈13.4 KL₅₀, because renormalizing over the teacher support hides the candidate's off-support mass collapse
-      that KL₅₀'s explicit tail bucket captures. prod-KL therefore has to be read next to PPL for collapsed models; full per-context
-      columns are in the PLAN tables.
-    </p>
 
-    <h3>3.2 Kernel organization</h3>
+    <h3>3.3 Kernel organization</h3>
 <pre><code>A[M,K] × B[K,N], where B = Wᵀ
 one B tile = W[n:n+8, k:k+64]
 reference  = 192 B indices + 8 B LUT             = 200 B = 3.125 bit/W
@@ -669,7 +674,7 @@ two K32    = 216 B = 3.375 bit/W, algorithm oracle only (not native LUT-B)</code
       </tbody>
     </table></div>
 
-    <h3>3.3 Simulation estimate</h3>
+    <h3>3.4 Simulation estimate</h3>
     <div class="table-wrap"><table class="data">
       <thead><tr><th>Native Rubin Weight Contract</th><th class="num">Bits/W</th><th class="num">Byte-only vs H100 BF16</th><th class="num">Byte-only vs B200 BF16</th><th class="num">LUT-B rate required</th></tr></thead>
       <tbody>
