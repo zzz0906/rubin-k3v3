@@ -274,8 +274,8 @@
     <a href="#weight-explorer">Figure 1 · Weight</a>
     <a href="#kv-explorer">Figure 2 · KV</a>
     <a href="#tldr">TL;DR</a>
-    <a href="#sec1">1&ensp;Rubin LUT-B</a>
-    <a href="#sec2">2&ensp;Hardware contract</a>
+    <a href="#sec1">1&ensp;Introduction</a>
+    <a href="#sec2">2&ensp;LUT-B contract</a>
     <a href="#weight">3&ensp;Weight W3A8</a>
     <a href="#activation">4&ensp;Activation</a>
     <a href="#kv">5&ensp;KV Cache</a>
@@ -418,7 +418,7 @@
       <ol>
         <li><strong>Weight is the natural LUT-B target, but scale contracts matter.</strong> CUDA 13.4 defines a
           3.125-bit K64 LUT payload and a native 3.25-bit K64 SFB path. The measured 3.375-bit two-K32 rows are
-          non-native quality oracles. My data-path estimate for native K64 is 40–70% of dense FP8, centered at 55%;
+          non-native quality oracles. Our data-path estimate for native K64 is 40–70% of dense FP8, centered at 55%;
           the 32.33× H100 byte ceiling requires about 79%.</li>
         <li><strong>A3 is unsupported as matrix A in the current LUT-B MMA.</strong> Public PTX exposes lookup
           decompression only for B. W3 already occupies that operand, so W3A3 cannot be encoded; the supported pairing
@@ -510,19 +510,23 @@ effective         = 3.125 bit/value</code></pre>
     </p>
 
     <h3>2.2 What do the CUDA 13.4 compile tests tell us?</h3>
-    <p>We compiled PTX in a clean K8s container and inspected the resulting SASS:</p>
+    <p>
+      We compiled PTX in a clean K8s container and inspected the emitted SASS. A later PTX 9.4 re-audit retargeted the
+      probes from <code>sm_107a</code> to the documented <code>sm_107f</code> K64 forms; rows whose SASS predates that
+      fix say so, and their legality claims rest on the ISA text until the rerun lands:
+    </p>
     <div class="table-wrap"><table class="data">
       <thead><tr><th>Probe</th><th>Compatibility</th><th>Compiler / SASS evidence</th><th>Meaning</th></tr></thead>
       <tbody>
         <tr><td><code>sm_107f</code> family target</td><td><span class="faint">REQUIRED</span></td><td>Compile probe updated; rerun pending</td><td>Prior <code>sm_107a</code> syntax pass did not validate documented K64 form</td></tr>
         <tr><td>UE5M3 conversion</td><td><span class="ok">SUPPORTED</span></td><td><code>F2FP.SATFINITE.UE5M3</code></td><td>The UE5M3 datatype itself exists</td></tr>
-        <tr><td>Dense E4M3 A × LUT-B E4M3 B</td><td><span class="ok">SUPPORTED</span></td><td><code>UTCQMMA.LUTB</code></td><td>The basic QK/PV mapping is legal</td></tr>
-        <tr><td>MXFP8 block32 A × LUT-B B</td><td><span class="ok">SUPPORTED</span></td><td><code>UTCQMMA.LUTB</code> + scale TMEM</td><td>Scaled Q/P can be fused</td></tr>
+        <tr><td>Dense E4M3 A × LUT-B E4M3 B</td><td><span class="ok">SUPPORTED</span></td><td>PTX 9.4 form; pre-fix <code>UTCQMMA.LUTB</code> SASS, <code>sm_107f</code> rerun pending</td><td>The basic QK/PV mapping is legal</td></tr>
+        <tr><td>MXFP8 block32 A × LUT-B B</td><td><span class="ok">SUPPORTED</span></td><td>PTX 9.4 form; pre-fix SASS + scale TMEM, rerun pending</td><td>Scaled Q/P can be fused</td></tr>
         <tr><td>Two independent K32 B scales</td><td><span class="no">NOT NATIVE</span></td><td>PTX Tables 70–71</td><td><code>mxf8f6f4</code> exposes only <code>scale_vec::1X</code></td></tr>
         <tr><td>LUT-B full-tile throughput</td><td><span class="faint">UNKNOWN</span></td><td>No PTX/spec value</td><td>17.5P dense FP8 is not a LUT-B rate</td></tr>
-        <tr><td>LUT-B collector B reuse</td><td><span class="ok">SUPPORTED</span></td><td><code>B_KEEP</code> → <code>B_REUSE</code></td><td>One K/V tile can be reused across GQA heads</td></tr>
-        <tr><td>Sparse A × ordinary B</td><td><span class="ok">SUPPORTED</span></td><td><code>UTCQMMA</code> control</td><td>Sparse-A MMA itself exists</td></tr>
-        <tr><td>Sparse A × LUT-B B</td><td><span class="no">UNSUPPORTED</span></td><td><code>ptxas</code> rejects <code>mma.sp...lut::b</code></td><td>Sparse P cannot be used together with LUT-B V</td></tr>
+        <tr><td>LUT-B collector B reuse</td><td><span class="ok">SUPPORTED</span></td><td>PTX collector fill/use/lastuse semantics</td><td>One K/V tile can be reused across GQA heads; reuse is opportunistic and may reload</td></tr>
+        <tr><td>Sparse A × ordinary B</td><td><span class="ok">SUPPORTED</span></td><td>PTX-defined sparse-A MMA; pre-fix <code>UTCQMMA</code> SASS</td><td>Sparse-A MMA itself exists</td></tr>
+        <tr><td>Sparse A × LUT-B B</td><td><span class="no">UNSUPPORTED</span></td><td>No such ISA form; <code>ptxas</code> rejects, rerun pending</td><td>Sparse P cannot be used together with LUT-B V</td></tr>
         <tr><td>MXFP8 + UE5M3 scale + LUT-B</td><td><span class="no">UNSUPPORTED</span></td><td>PTX 9.4 Table 71</td><td>The FP8 scale must use UE8M0 instead</td></tr>
         <tr><td>Transposed LUT-B B</td><td><span class="no">UNSUPPORTED</span></td><td>PTX 9.4 restriction</td><td>K must be stored physically as Kᵀ</td></tr>
       </tbody>
@@ -693,7 +697,7 @@ two K32    = 216 B = 3.375 bit/W, algorithm oracle only (not native LUT-B)</code
     </table></div>
     <p>
       The 32.33× number is only the far-right byte ceiling. Reaching it requires LUT-B to sustain 13.86 PFLOP/s,
-      about 79.2% of Rubin's published dense FP8 peak. My 40–70% engineering band is lower because LUT reconstruction
+      about 79.2% of Rubin's published dense FP8 peak. Our 40–70% engineering band is lower because LUT reconstruction
       is integrated (better than software dequant), but the path still selects 24 useful index bytes from a 48-byte
       descriptor fetch and adds TMEM-LUT plus collector dependencies (worse than ordinary dense FP8). Two-K32
       quality-oracle rows receive no speed estimate.
@@ -991,8 +995,8 @@ attention throughput = min(B_HBM × arithmetic intensity,
     <p>
       First, consider the hardware of a single GPU. H100 and B200 can serve as bandwidth baselines, but they do not
       have SM107's <code>decompress::lut::b</code>; only Rubin can execute the K3V3 LUT-B path in this article
-      natively. The speed panel of <a href="#kv-explorer">Figure 2</a> tracks explicit 10/25/50/100%-of-dense
-      sensitivity endpoints derived below.
+      natively. The speed panel of <a href="#kv-explorer">Figure 2</a> shows the 40/55/70% data-path guesses plus
+      the 100% dense endpoint; the 10/25/50/100% sensitivity rows below map the full range.
     </p>
     <div class="table-wrap"><table class="data">
       <thead><tr><th>GPU</th><th>Memory</th><th class="num">Capacity</th><th class="num">HBM bandwidth</th><th class="num">Dense FP8 ceiling</th><th>Native LUT-B</th></tr></thead>
@@ -1103,7 +1107,8 @@ attention throughput = min(B_HBM × arithmetic intensity,
       <strong>13.86 PFLOP/s at 32K</strong>, and <strong>14.40 PFLOP/s at 1M</strong>. Below those values this model is
       tile-bound; above them it is HBM-bound. These thresholds are already 71.0%, 79.2%, and 82.3% of Rubin's dense
       FP8 peak. Public PTX provides no evidence that LUT-B reaches those fractions, and the 4/128 occupancy itself is
-      only an optimistic useful-row upper bound.
+      only an optimistic useful-row upper bound. MHA (GQA ratio 1) would be worse; multi-token or speculative decode
+      fills more rows but must be modeled separately.
     </p>
 
     <h4>5.3.4 Data-path engineering guess</h4>
@@ -1121,6 +1126,12 @@ attention throughput = min(B_HBM × arithmetic intensity,
       dense parity. The table is specific to Qwen GQA4 and still excludes page walking, softmax, barriers, and output
       traffic, so an implemented fused kernel should land below it.
     </p>
+    <div class="callout">
+      If GQA B-tile reuse is lost entirely, the 8K/32K bandwidth ceilings fall to about 97.0 / 108.3 TFLOP/s and the
+      model becomes HBM-bound again. All token/s values are attention-only ceilings that exclude model weights, MLP,
+      sampling, scheduling, communication, and power throttling; they are neither Qwen3-4B end-to-end output token/s
+      nor Rubin silicon results.
+    </div>
 
     <h4 id="capacity">5.3.5 HBM context bound per concurrent request</h4>
     <p>
@@ -1171,7 +1182,7 @@ attention throughput = min(B_HBM × arithmetic intensity,
     </ul>
     <h3>7.2 Performance</h3>
     <ul>
-      <li><strong>Weight is the cleanest mapping, but the old headline was only a byte ceiling.</strong> My
+      <li><strong>Weight is the cleanest mapping, but the old headline was only a byte ceiling.</strong> Our
         data-path guess puts the native K64 path at 16.32–28.57× H100 BF16 weight-only, centered at 22.45×; the
         32.33× ceiling still requires 79.2% of dense FP8 before non-weight overhead.</li>
       <li><strong>KV saves more bytes as context grows, but decode shape controls utilization.</strong> GQA4
