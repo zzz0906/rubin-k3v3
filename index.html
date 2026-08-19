@@ -613,10 +613,10 @@ effective         = 3.125 bit/value</code></pre>
       only calibration size (512→4096 tokens, −0.022 KL₅₀) and one alternation round (−0.009) survive as real
       effects — RMS²-vs-unweighted codebook weighting does not, which is why the weighted two-K32 row shuffles
       within noise of its unweighted sibling. † MiniMax cells of both weighted rows are shared with their H64 siblings: the routed pipeline always fits
-      RMS²-weighted codebooks. The MiniMax alternation rerun measured the opposite direction — round 1 is worse
-      than round 0 on every context (128K KL₅₀ 0.23976 → 0.26777) — exactly what the Hessian-starvation analysis
-      predicts for per-expert Hessians estimated from ~1/32 of calibration tokens, so alternation stays off for
-      routed experts. On Qwen/Gemma, rounds 1–4 shuffle within the seed noise band (per-round table in the PLAN);
+      RMS²-weighted codebooks. The MiniMax alternation reruns measured the opposite direction — every round 1–4 is worse
+      than round 0 on every context (128K KL₅₀ 0.23976 at round 0 versus 0.252–0.275 across rounds) — exactly what
+      the Hessian-starvation analysis predicts for per-expert Hessians estimated from ~1/32 of calibration tokens,
+      so alternation stays off for routed experts. On Qwen/Gemma, rounds 1–4 shuffle within the seed noise band (per-round table in the PLAN);
       the per-context best rounds reach Qwen 64K 10.564 / 0.23425 (round 3). A same-bitrate compact <strong>AQLM</strong> reproduction (additive VQ, M=3, 2⁸ codes, g=8, no SGD
       fine-tune) improves monotonically over its alternating rounds but saturates at 16.096 PPL / 0.470 KL₅₀ on the
       8K protocol — about 2× behind the GPTQ-corrected scalar LUT — so additive VQ without its fine-tuning stage is
