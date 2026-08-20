@@ -609,15 +609,21 @@ effective         = 3.125 bit/value</code></pre>
       matching runtime transform on A.
     </p>
     <p>
-      <strong>Production KL cross-check.</strong> All MiniMax rows were additionally scored with our production
-      truncated-KL metric (prod-KL),
-      measured through the actual SGLang serving stack in a dedicated rerun batch: KL(ref‖cand) renormalized over the teacher's
-      top-50 support, with the uncovered teacher tail reported separately rather than entering the sum. The two metrics agree on
-      every ranking that matters here — e.g. the best native MiniMax row (RMS² + K64 SFB + global) reads 0.170 KL₅₀ / 0.181 prod-KL
-      at 128K, and BF16+A8 reproduces to the last digit — with one instructive exception: collapsed baselines like NF3/uniform read
-      ≈5.2 prod-KL versus ≈13.4 KL₅₀, because renormalizing over the teacher support hides the candidate's off-support mass collapse
-      that KL₅₀'s explicit tail bucket captures. prod-KL therefore has to be read next to PPL for collapsed models; full per-context
-      columns are in the PLAN tables.
+      <strong>Production KL cross-check.</strong> All MiniMax rows were additionally scored under our production
+      truncated-KL protocol (prod-KL), reproduced end-to-end through the actual SGLang serving stack: 64 HLE
+      reasoning traces are generated once by the native BF16 server with the model's own sampling settings, and every
+      quantized arm is then teacher-forced over the same 718,159 positions — all positions of prompt plus response,
+      scored on the reference's top-40 support with candidate-floor clamping, the uncovered teacher tail reported
+      separately rather than entering the sum. The probe fixes its own token set, so it yields one number per method
+      rather than one per context. On these self-generated traces the serving stack is bitwise deterministic — an
+      independent second native pass reads exactly 0.00000 — and the reference top-40 support leaves only 0.65%
+      uncovered tail. The coarse ranking matches the WikiText KL₅₀ story: the RMS² + global-scale rows lead (0.072
+      two-K32 oracle, 0.077 native K64), the GPTQ/H64 family compresses into a narrow 0.083–0.090 band (reasoning
+      positions are dominated by high-confidence tokens), AWQ sits mid-field, and unweighted Lloyd-Max variants trail.
+      One instructive exception persists: collapsed baselines like NF3/uniform read ≈7.3/5.4 prod-KL versus ≈13.3/12.2
+      KL₅₀, because renormalizing over the teacher support hides the candidate's off-support mass collapse that KL₅₀'s
+      explicit tail bucket captures. prod-KL therefore has to be read next to PPL for collapsed models; the full
+      column is in the PLAN tables.
     </p>
 
     <h3>3.2 The iteration method: inter-LM-GPTQ</h3>
